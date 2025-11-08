@@ -1,0 +1,213 @@
+2025-11-04 08:59:23,014 - ProfessionalOCRProcessor - INFO - [file_processing.py:1005] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 08:59:23,698 - ProfessionalOCRProcessor - INFO - [file_processing.py:1009] - Tesseract version: 5.5.0.20241111
+2025-11-04 08:59:23,698 - ProfessionalOCRProcessor - INFO - [file_processing.py:1411] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 08:59:23,698 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: simple
+2025-11-04 08:59:23,753 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 08:59:24,925 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, original):  (0.952)
+2025-11-04 08:59:25,541 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, inverted):  (0.949)
+2025-11-04 08:59:26,458 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-04 08:59:26,466 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: medium
+2025-11-04 08:59:26,466 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 08:59:26,469 - ProfessionalOCRProcessor - INFO - [file_processing.py:1114] - Оригинальный размер: 860x887
+2025-11-04 08:59:26,478 - ProfessionalOCRProcessor - INFO - [file_processing.py:1133] - Масштабированный размер: 1720x1774
+2025-11-04 08:59:26,885 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, original):  (0.828)
+2025-11-04 08:59:27,275 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, inverted):  (0.874)
+2025-11-04 08:59:27,655 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, high_contrast):  (0.828)
+2025-11-04 08:59:27,655 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: advanced
+2025-11-04 08:59:27,655 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 08:59:27,655 - ProfessionalOCRProcessor - INFO - [file_processing.py:1114] - Оригинальный размер: 860x887
+2025-11-04 08:59:27,672 - ProfessionalOCRProcessor - INFO - [file_processing.py:1133] - Масштабированный размер: 1720x1774
+2025-11-04 08:59:28,125 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, original):  (0.828)
+2025-11-04 08:59:28,476 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, inverted):  (0.874)
+2025-11-04 08:59:28,823 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-04 08:59:28,823 - ProfessionalOCRProcessor - INFO - [file_processing.py:1497] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=157, оценка качества=0.867
+2025-11-04 08:59:28,826 - ProfessionalOCRProcessor - INFO - [file_processing.py:1038] - Папка пок карда шуд: tmp/processed
+2025-11-04 08:59:28,826 - ProfessionalOCRProcessor - INFO - [file_processing.py:1038] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:02:45,277 - ProfessionalOCRProcessor - INFO - [file_processing.py:1005] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:02:45,326 - ProfessionalOCRProcessor - INFO - [file_processing.py:1009] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:02:45,326 - ProfessionalOCRProcessor - INFO - [file_processing.py:1411] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 09:02:45,326 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: simple
+2025-11-04 09:02:45,335 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:02:46,314 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, original):  (0.952)
+2025-11-04 09:02:46,984 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, inverted):  (0.949)
+2025-11-04 09:02:47,975 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-04 09:02:47,975 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: medium
+2025-11-04 09:02:47,975 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:02:47,981 - ProfessionalOCRProcessor - INFO - [file_processing.py:1114] - Оригинальный размер: 860x887
+2025-11-04 09:02:47,992 - ProfessionalOCRProcessor - INFO - [file_processing.py:1133] - Масштабированный размер: 1720x1774
+2025-11-04 09:02:48,394 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, original):  (0.828)
+2025-11-04 09:02:48,725 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, inverted):  (0.874)
+2025-11-04 09:02:49,075 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (medium, high_contrast):  (0.828)
+2025-11-04 09:02:49,075 - ProfessionalOCRProcessor - INFO - [file_processing.py:1423] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:02:49,075 - ProfessionalOCRProcessor - INFO - [file_processing.py:1070] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:02:49,085 - ProfessionalOCRProcessor - INFO - [file_processing.py:1114] - Оригинальный размер: 860x887
+2025-11-04 09:02:49,095 - ProfessionalOCRProcessor - INFO - [file_processing.py:1133] - Масштабированный размер: 1720x1774
+2025-11-04 09:02:49,477 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, original):  (0.828)
+2025-11-04 09:02:49,806 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, inverted):  (0.874)
+2025-11-04 09:02:50,148 - ProfessionalOCRProcessor - INFO - [file_processing.py:1454] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-04 09:02:50,148 - ProfessionalOCRProcessor - INFO - [file_processing.py:1497] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=157, оценка качества=0.867
+2025-11-04 09:02:50,148 - ProfessionalOCRProcessor - INFO - [file_processing.py:1038] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:02:50,148 - ProfessionalOCRProcessor - INFO - [file_processing.py:1038] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:29:53,035 - ProfessionalOCRProcessor - INFO - [file_processing.py:991] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:29:53,149 - ProfessionalOCRProcessor - INFO - [file_processing.py:994] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:29:53,149 - ProfessionalOCRProcessor - INFO - [file_processing.py:1358] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 09:29:53,149 - ProfessionalOCRProcessor - INFO - [file_processing.py:1369] - Пробуем метод препроцессинга: simple
+2025-11-04 09:29:53,161 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:29:54,135 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта original: invalid group reference 10 at position 1
+2025-11-04 09:29:54,811 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта inverted: invalid group reference 10 at position 1
+2025-11-04 09:29:55,913 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта high_contrast: invalid group reference 10 at position 1
+2025-11-04 09:29:55,913 - ProfessionalOCRProcessor - INFO - [file_processing.py:1369] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:29:55,915 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:29:55,920 - ProfessionalOCRProcessor - INFO - [file_processing.py:1091] - Оригинальный размер: 860x887
+2025-11-04 09:29:55,930 - ProfessionalOCRProcessor - INFO - [file_processing.py:1108] - Масштабированный размер: 1720x1774
+2025-11-04 09:29:56,358 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта original: invalid group reference 10 at position 1
+2025-11-04 09:29:56,687 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта inverted: invalid group reference 10 at position 1
+2025-11-04 09:29:57,038 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1405] - Ошибка при обработке варианта high_contrast: invalid group reference 10 at position 1
+2025-11-04 09:29:57,038 - ProfessionalOCRProcessor - INFO - [file_processing.py:1413] - Пробуем фолбэк: обработка без препроцессинга
+2025-11-04 09:29:57,770 - ProfessionalOCRProcessor - ERROR - [file_processing.py:1435] - Фолбэк метод не сработал: invalid group reference 10 at position 1
+2025-11-04 09:29:57,770 - ProfessionalOCRProcessor - ERROR - [file_processing.py:1464] - Не удалось извлечь текст ни одним методом
+2025-11-04 09:29:57,770 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:29:57,770 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:32:42,478 - ProfessionalOCRProcessor - INFO - [file_processing.py:991] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:32:42,534 - ProfessionalOCRProcessor - INFO - [file_processing.py:994] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:32:42,534 - ProfessionalOCRProcessor - INFO - [file_processing.py:1359] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 09:32:42,534 - ProfessionalOCRProcessor - INFO - [file_processing.py:1370] - Пробуем метод препроцессинга: simple
+2025-11-04 09:32:42,541 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:32:43,611 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта original: invalid group reference 15 at position 1
+2025-11-04 09:32:44,376 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта inverted: invalid group reference 15 at position 1
+2025-11-04 09:32:45,378 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта high_contrast: invalid group reference 15 at position 1
+2025-11-04 09:32:45,378 - ProfessionalOCRProcessor - INFO - [file_processing.py:1370] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:32:45,381 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:32:45,381 - ProfessionalOCRProcessor - INFO - [file_processing.py:1091] - Оригинальный размер: 860x887
+2025-11-04 09:32:45,396 - ProfessionalOCRProcessor - INFO - [file_processing.py:1108] - Масштабированный размер: 1720x1774
+2025-11-04 09:32:45,861 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта original: invalid group reference 15 at position 1
+2025-11-04 09:32:46,246 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта inverted: invalid group reference 15 at position 1
+2025-11-04 09:32:46,630 - ProfessionalOCRProcessor - WARNING - [file_processing.py:1406] - Ошибка при обработке варианта high_contrast: invalid group reference 15 at position 1
+2025-11-04 09:32:46,630 - ProfessionalOCRProcessor - INFO - [file_processing.py:1414] - Пробуем фолбэк: обработка без препроцессинга
+2025-11-04 09:32:47,391 - ProfessionalOCRProcessor - ERROR - [file_processing.py:1436] - Фолбэк метод не сработал: invalid group reference 15 at position 1
+2025-11-04 09:32:47,394 - ProfessionalOCRProcessor - ERROR - [file_processing.py:1465] - Не удалось извлечь текст ни одним методом
+2025-11-04 09:32:47,394 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:32:47,394 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:35:10,303 - ProfessionalOCRProcessor - INFO - [file_processing.py:991] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:35:10,366 - ProfessionalOCRProcessor - INFO - [file_processing.py:994] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:35:10,366 - ProfessionalOCRProcessor - INFO - [file_processing.py:1358] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 09:35:10,366 - ProfessionalOCRProcessor - INFO - [file_processing.py:1369] - Пробуем метод препроцессинга: simple
+2025-11-04 09:35:10,382 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:35:11,548 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (simple, original):  (0.952)
+2025-11-04 09:35:12,410 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (simple, inverted):  (0.949)
+2025-11-04 09:35:13,477 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-04 09:35:13,477 - ProfessionalOCRProcessor - INFO - [file_processing.py:1369] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:35:13,477 - ProfessionalOCRProcessor - INFO - [file_processing.py:1050] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:35:13,486 - ProfessionalOCRProcessor - INFO - [file_processing.py:1091] - Оригинальный размер: 860x887
+2025-11-04 09:35:13,494 - ProfessionalOCRProcessor - INFO - [file_processing.py:1108] - Масштабированный размер: 1720x1774
+2025-11-04 09:35:13,952 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (advanced, original):  (0.828)
+2025-11-04 09:35:14,330 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (advanced, inverted):  (0.874)
+2025-11-04 09:35:14,726 - ProfessionalOCRProcessor - INFO - [file_processing.py:1399] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-04 09:35:14,726 - ProfessionalOCRProcessor - INFO - [file_processing.py:1441] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=152, оценка качества=0.867
+2025-11-04 09:35:14,726 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:35:14,726 - ProfessionalOCRProcessor - INFO - [file_processing.py:1020] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:37:41,870 - ProfessionalOCRProcessor - INFO - [file_processing.py:990] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:37:41,916 - ProfessionalOCRProcessor - INFO - [file_processing.py:993] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:37:41,916 - ProfessionalOCRProcessor - INFO - [file_processing.py:1357] - Начало OCR обработки: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png
+2025-11-04 09:37:41,916 - ProfessionalOCRProcessor - INFO - [file_processing.py:1368] - Пробуем метод препроцессинга: simple
+2025-11-04 09:37:41,926 - ProfessionalOCRProcessor - INFO - [file_processing.py:1049] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:37:42,876 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (simple, original):  (0.952)
+2025-11-04 09:37:43,536 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (simple, inverted):  (0.949)
+2025-11-04 09:37:44,486 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-04 09:37:44,486 - ProfessionalOCRProcessor - INFO - [file_processing.py:1368] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:37:44,486 - ProfessionalOCRProcessor - INFO - [file_processing.py:1049] - Файл валиден: C:\Users\Kabir\Pictures\Screenshots\Снимок экрана 2025-11-03 125420.png (0.06MB)
+2025-11-04 09:37:44,493 - ProfessionalOCRProcessor - INFO - [file_processing.py:1090] - Оригинальный размер: 860x887
+2025-11-04 09:37:44,503 - ProfessionalOCRProcessor - INFO - [file_processing.py:1107] - Масштабированный размер: 1720x1774
+2025-11-04 09:37:44,906 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (advanced, original):  (0.828)
+2025-11-04 09:37:45,238 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (advanced, inverted):  (0.874)
+2025-11-04 09:37:45,592 - ProfessionalOCRProcessor - INFO - [file_processing.py:1398] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-04 09:37:45,596 - ProfessionalOCRProcessor - INFO - [file_processing.py:1440] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=152, оценка качества=0.867
+2025-11-04 09:37:45,596 - ProfessionalOCRProcessor - INFO - [file_processing.py:1019] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:37:45,596 - ProfessionalOCRProcessor - INFO - [file_processing.py:1019] - Папка пок карда шуд: tmp/debug
+2025-11-04 09:42:22,704 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-04 09:42:22,759 - ProfessionalOCRProcessor - INFO - [file_processing.py:53] - Tesseract version: 5.5.0.20241111
+2025-11-04 09:42:57,498 - ProfessionalOCRProcessor - INFO - [file_processing.py:544] - Асинхронная обработка: files\6075185878_converted.png
+2025-11-04 09:42:57,499 - ProfessionalOCRProcessor - INFO - [file_processing.py:417] - Начало OCR обработки: files\6075185878_converted.png
+2025-11-04 09:42:57,500 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: simple
+2025-11-04 09:42:57,510 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.06MB)
+2025-11-04 09:42:58,827 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, original):  (0.952)
+2025-11-04 09:42:59,941 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, inverted):  (0.949)
+2025-11-04 09:43:00,954 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-04 09:43:00,956 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: advanced
+2025-11-04 09:43:00,956 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.06MB)
+2025-11-04 09:43:00,960 - ProfessionalOCRProcessor - INFO - [file_processing.py:150] - Оригинальный размер: 860x887
+2025-11-04 09:43:00,969 - ProfessionalOCRProcessor - INFO - [file_processing.py:167] - Масштабированный размер: 1720x1774
+2025-11-04 09:43:01,413 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, original):  (0.828)
+2025-11-04 09:43:01,791 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, inverted):  (0.874)
+2025-11-04 09:43:02,177 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-04 09:43:02,177 - ProfessionalOCRProcessor - INFO - [file_processing.py:500] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=152, оценка качества=0.867
+2025-11-04 09:43:02,177 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-11-04 09:43:02,177 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-11-05 11:16:00,501 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-05 11:16:01,246 - ProfessionalOCRProcessor - INFO - [file_processing.py:53] - Tesseract version: 5.5.0.20241111
+2025-11-05 11:17:41,178 - ProfessionalOCRProcessor - INFO - [file_processing.py:544] - Асинхронная обработка: files\6075185878_converted.png
+2025-11-05 11:17:41,179 - ProfessionalOCRProcessor - INFO - [file_processing.py:417] - Начало OCR обработки: files\6075185878_converted.png
+2025-11-05 11:17:41,179 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: simple
+2025-11-05 11:17:41,187 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.02MB)
+2025-11-05 11:17:41,898 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, original):  (0.771)
+2025-11-05 11:17:42,234 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, inverted):  (0.775)
+2025-11-05 11:17:42,744 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, high_contrast):  (0.778)
+2025-11-05 11:17:42,744 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: advanced
+2025-11-05 11:17:42,745 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.02MB)
+2025-11-05 11:17:42,746 - ProfessionalOCRProcessor - INFO - [file_processing.py:150] - Оригинальный размер: 753x233
+2025-11-05 11:17:42,748 - ProfessionalOCRProcessor - INFO - [file_processing.py:167] - Масштабированный размер: 1506x466
+2025-11-05 11:17:43,091 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, original):  (0.899)
+2025-11-05 11:17:43,421 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, inverted):  (0.863)
+2025-11-05 11:17:43,676 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, high_contrast):  (0.899)
+2025-11-05 11:17:43,676 - ProfessionalOCRProcessor - INFO - [file_processing.py:500] - Лучший результат: метод=advanced, вариант=original, уверенность=0.899, слов=2, оценка качества=0.630
+2025-11-05 11:17:43,676 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-11-05 11:17:43,676 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-11-05 11:18:18,314 - ProfessionalOCRProcessor - INFO - [file_processing.py:544] - Асинхронная обработка: files\6075185878_converted.png
+2025-11-05 11:18:18,315 - ProfessionalOCRProcessor - INFO - [file_processing.py:417] - Начало OCR обработки: files\6075185878_converted.png
+2025-11-05 11:18:18,315 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: simple
+2025-11-05 11:18:18,323 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.06MB)
+2025-11-05 11:18:19,314 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, original):  (0.952)
+2025-11-05 11:18:20,027 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, inverted):  (0.949)
+2025-11-05 11:18:20,988 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, high_contrast):  (0.952)
+2025-11-05 11:18:20,989 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: advanced
+2025-11-05 11:18:20,989 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.06MB)
+2025-11-05 11:18:20,994 - ProfessionalOCRProcessor - INFO - [file_processing.py:150] - Оригинальный размер: 860x887
+2025-11-05 11:18:21,007 - ProfessionalOCRProcessor - INFO - [file_processing.py:167] - Масштабированный размер: 1720x1774
+2025-11-05 11:18:21,425 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, original):  (0.828)
+2025-11-05 11:18:21,778 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, inverted):  (0.874)
+2025-11-05 11:18:22,131 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, high_contrast):  (0.828)
+2025-11-05 11:18:22,131 - ProfessionalOCRProcessor - INFO - [file_processing.py:500] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.952, слов=152, оценка качества=0.867
+2025-11-05 11:18:55,611 - ProfessionalOCRProcessor - INFO - [file_processing.py:544] - Асинхронная обработка: files\6075185878_converted.png
+2025-11-05 11:18:55,613 - ProfessionalOCRProcessor - INFO - [file_processing.py:417] - Начало OCR обработки: files\6075185878_converted.png
+2025-11-05 11:18:55,613 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: simple
+2025-11-05 11:18:55,621 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.02MB)
+2025-11-05 11:18:56,082 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, original):  (0.771)
+2025-11-05 11:18:56,429 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, inverted):  (0.775)
+2025-11-05 11:18:56,885 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, high_contrast):  (0.778)
+2025-11-05 11:18:56,886 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: advanced
+2025-11-05 11:18:56,886 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_converted.png (0.02MB)
+2025-11-05 11:18:56,888 - ProfessionalOCRProcessor - INFO - [file_processing.py:150] - Оригинальный размер: 753x233
+2025-11-05 11:18:56,891 - ProfessionalOCRProcessor - INFO - [file_processing.py:167] - Масштабированный размер: 1506x466
+2025-11-05 11:18:57,157 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, original):  (0.899)
+2025-11-05 11:18:57,400 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, inverted):  (0.863)
+2025-11-05 11:18:57,644 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, high_contrast):  (0.899)
+2025-11-05 11:18:57,644 - ProfessionalOCRProcessor - INFO - [file_processing.py:500] - Лучший результат: метод=advanced, вариант=original, уверенность=0.899, слов=2, оценка качества=0.630
+2025-11-05 11:19:26,824 - ProfessionalOCRProcessor - INFO - [file_processing.py:544] - Асинхронная обработка: files\6075185878_temp_image.png
+2025-11-05 11:19:26,825 - ProfessionalOCRProcessor - INFO - [file_processing.py:417] - Начало OCR обработки: files\6075185878_temp_image.png
+2025-11-05 11:19:26,826 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: simple
+2025-11-05 11:19:26,835 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_temp_image.png (0.19MB)
+2025-11-05 11:19:27,309 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, original):  (0.794)
+2025-11-05 11:19:27,704 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, inverted):  (0.778)
+2025-11-05 11:19:28,174 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (simple, high_contrast):  (0.802)
+2025-11-05 11:19:28,174 - ProfessionalOCRProcessor - INFO - [file_processing.py:428] - Пробуем метод препроцессинга: advanced
+2025-11-05 11:19:28,175 - ProfessionalOCRProcessor - INFO - [file_processing.py:109] - Файл валиден: files\6075185878_temp_image.png (0.19MB)
+2025-11-05 11:19:28,178 - ProfessionalOCRProcessor - INFO - [file_processing.py:150] - Оригинальный размер: 753x233
+2025-11-05 11:19:28,180 - ProfessionalOCRProcessor - INFO - [file_processing.py:167] - Масштабированный размер: 1506x466
+2025-11-05 11:19:28,382 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, original):  (0.950)
+2025-11-05 11:19:28,572 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, inverted):  (0.950)
+2025-11-05 11:19:28,763 - ProfessionalOCRProcessor - INFO - [file_processing.py:458] - Найден текст (advanced, high_contrast):  (0.950)
+2025-11-05 11:19:28,764 - ProfessionalOCRProcessor - INFO - [file_processing.py:500] - Лучший результат: метод=simple, вариант=high_contrast, уверенность=0.802, слов=35, оценка качества=0.662
+2025-11-05 11:21:48,128 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-11-05 11:21:48,169 - ProfessionalOCRProcessor - INFO - [file_processing.py:53] - Tesseract version: 5.5.0.20241111
+2025-11-05 11:24:20,126 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-11-05 11:24:20,126 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
