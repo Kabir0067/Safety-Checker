@@ -1,7 +1,6 @@
 from typing import Optional, Dict, List, Any,Tuple
 from asyncio import Semaphore
 from docx import Document
-import aspose.words as aw
 import concurrent.futures
 from pathlib import Path
 from PIL import Image, ImageEnhance
@@ -16,8 +15,9 @@ import shutil
 import cv2
 import os
 import re
-
+import docx   
 import pytesseract
+import fitz
 
 
 
@@ -746,16 +746,17 @@ class FileConvertToText:
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
 
+    async def extract_docx_async(self, file_path: str) -> Dict[str, Any]:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
+
         def extract_docx():
             try:
-                doc = Document(str(path))
-                paragraphs = []
-                for p in doc.paragraphs:
-                    text = p.text
-                    if text.strip():
-                        paragraphs.append(text)
-                    else:
-                        paragraphs.append("") 
+                doc = docx.Document(str(path))
+                paragraphs = [p.text if p.text.strip() else "" for p in doc.paragraphs]
                 text = "\n".join(paragraphs)
                 metadata = {
                     "paragraph_count": len(paragraphs),
@@ -764,66 +765,46 @@ class FileConvertToText:
                 }
                 return {"status": "success", "text": text, "metadata": metadata}
             except Exception as e:
-                try:
-                    doc_aw = aw.Document(str(path))
-                    text = doc_aw.get_text()
-                    text = re.sub(r'\x0c', '\n\n', text)
-                    text = text.replace('\r\n', '\n').replace('\r', '\n')
-                    metadata = {
-                        "page_count": doc_aw.page_count,
-                        "word_count": len(text.split()),
-                        "source": "aspose-words"
-                    }
-                    return {"status": "success", "text": text, "metadata": metadata}
-                except Exception as e2:
-                    raise Exception(f"python-docx failed: {e} | Aspose failed: {e2}")
+                return {"status": "error", "text": f"python-docx failed: {str(e)}", "metadata": {}}
 
         try:
             return await asyncio.to_thread(extract_docx)
         except Exception as e:
-            self.logger.exception(e)
             return {"status": "error", "text": f"Error: {str(e)}", "metadata": {}}
 
-
     async def pdf_to_text_async(self, file_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
-        if output_dir is None:
-            output_dir = self.FILES_DIR
-            
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
-
         if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": f"{path.name}: file too large (max 10 MB).", "metadata": {}}
-
-        output_file = Path(output_dir) / f"{path.stem}_temp.docx"
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
         def convert_pdf():
             try:
-                doc = aw.Document(str(path))
-                doc.save(str(output_file), aw.SaveFormat.DOCX)
-                return {"status": "success", "metadata": {"page_count": doc.page_count}}
+                doc = fitz.open(str(path))
+                text = "".join([page.get_text() for page in doc])
+                return {"status": "success", "text": text, "metadata": {"page_count": len(doc)}}
             except Exception as e:
-                raise Exception(f"PDF to DOCX failed: {str(e)}")
+                return {"status": "error", "text": str(e), "metadata": {}}
 
-        try:
-            convert_result = await asyncio.to_thread(convert_pdf)
-            if convert_result["status"] != "success":
-                return convert_result
+        return await asyncio.to_thread(convert_pdf)
 
-            read_result = await self.read_word(str(output_file))
-            if output_file.exists():
-                await asyncio.to_thread(output_file.unlink)
+    async def docx_to_text_async(self, file_path: str) -> Dict[str, Any]:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
-            if read_result["status"] == "success":
-                read_result["metadata"].update(convert_result["metadata"])
-                read_result["metadata"]["original_format"] = "pdf"
-            return read_result
-        except Exception as e:
-            self.logger.exception(e)
-            return {"status": "error", "text": f"Error processing {file_path}: {str(e)}", "metadata": {}}
+        def convert_docx():
+            try:
+                doc = docx.Document(str(path))
+                text = "\n".join([p.text for p in doc.paragraphs])
+                return {"status": "success", "text": text, "metadata": {"paragraphs": len(doc.paragraphs)}}
+            except Exception as e:
+                return {"status": "error", "text": str(e), "metadata": {}}
 
-   
+        return await asyncio.to_thread(convert_docx)
     async def read_csv_or_excel(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
