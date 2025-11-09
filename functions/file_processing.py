@@ -700,11 +700,11 @@ class FileConvertToText:
         'image': SUPPORTED_IMAGE_EXTENSIONS
     }
     LOG_DIR = "logs"
-    LOG_FILE = os.path.join(LOG_DIR, "file_convert_to_text_errors.log")
 
     def __init__(self):
         os.makedirs(self.FILES_DIR, exist_ok=True)
         os.makedirs(self.LOG_DIR, exist_ok=True)
+        self.LOG_FILE = os.path.join(self.LOG_DIR, "file_convert_to_text_errors.log")
         self.logger = logging.getLogger("FileConvertToText")
         self.logger.setLevel(logging.ERROR)
         handler = logging.FileHandler(self.LOG_FILE)
@@ -712,51 +712,40 @@ class FileConvertToText:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
+
         self.ocr_processor = ProfessionalOCRProcessor(
             languages=['eng', 'rus'],
             min_confidence=0.5
             )
 
+    # --- File info ---
     async def get_file_format(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"error": "File does not exist", "status": "error"}
-        
-        file_size = path.stat().st_size
-        if file_size > self.MAX_SIZE_BYTES:
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"error": "File is too large (max 10 MB)", "status": "error"}
-        
         mime_type, _ = mimetypes.guess_type(file_path)
-        file_extension = str(path.suffix.lower())
-        
         return {
             "status": "success",
-            "extension": file_extension,
+            "extension": path.suffix.lower(),
             "mime_type": mime_type or "unknown",
-            "size_bytes": file_size,
-            "size_human": f"{file_size / (1024 * 1024):.2f} MB"
+            "size_bytes": path.stat().st_size,
+            "size_human": f"{path.stat().st_size / (1024 * 1024):.2f} MB"
         }
 
-  
-    async def read_word(self, file_path: str) -> Dict[str, Any]:
+    # --- Word ---
+    async def read_word(self, file_path: str) -> dict:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
-
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
-
-    async def extract_docx_async(self, file_path: str) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists() or not path.is_file():
-            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
         def extract_docx():
             try:
                 doc = docx.Document(str(path))
-                paragraphs = [p.text if p.text.strip() else "" for p in doc.paragraphs]
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
                 text = "\n".join(paragraphs)
                 metadata = {
                     "paragraph_count": len(paragraphs),
@@ -767,49 +756,32 @@ class FileConvertToText:
             except Exception as e:
                 return {"status": "error", "text": f"python-docx failed: {str(e)}", "metadata": {}}
 
-        try:
-            return await asyncio.to_thread(extract_docx)
-        except Exception as e:
-            return {"status": "error", "text": f"Error: {str(e)}", "metadata": {}}
+        return await asyncio.to_thread(extract_docx)
 
-    async def pdf_to_text_async(self, file_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists() or not path.is_file():
-            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
-
-        def convert_pdf():
-            try:
-                doc = fitz.open(str(path))
-                text = "".join([page.get_text() for page in doc])
-                return {"status": "success", "text": text, "metadata": {"page_count": len(doc)}}
-            except Exception as e:
-                return {"status": "error", "text": str(e), "metadata": {}}
-
-        return await asyncio.to_thread(convert_pdf)
-
-    async def docx_to_text_async(self, file_path: str) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists() or not path.is_file():
-            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
-
-        def convert_docx():
-            try:
-                doc = docx.Document(str(path))
-                text = "\n".join([p.text for p in doc.paragraphs])
-                return {"status": "success", "text": text, "metadata": {"paragraphs": len(doc.paragraphs)}}
-            except Exception as e:
-                return {"status": "error", "text": str(e), "metadata": {}}
-
-        return await asyncio.to_thread(convert_docx)
-    async def read_csv_or_excel(self, file_path: str) -> Dict[str, Any]:
+    # --- PDF ---
+    async def pdf_to_text_async(self, file_path: str) -> dict:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
-            
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
+            return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
+
+        def extract_pdf():
+            try:
+                doc = fitz.open(str(path))
+                text = "".join([page.get_text() for page in doc])
+                metadata = {"page_count": len(doc), "source": "PyMuPDF"}
+                return {"status": "success", "text": text, "metadata": metadata}
+            except Exception as e:
+                return {"status": "error", "text": f"PDF read failed: {str(e)}", "metadata": {}}
+
+        return await asyncio.to_thread(extract_pdf)
+
+    # --- CSV / Excel ---
+    async def read_csv_or_excel(self, file_path: str) -> dict:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return {"status": "error", "text": "File does not exist", "metadata": {}}
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
 
@@ -820,21 +792,13 @@ class FileConvertToText:
                 elif path.suffix.lower() in ['.xls', '.xlsx']:
                     df = pd.read_excel(path, keep_default_na=False)
                 else:
-                    raise ValueError("Unsupported")
-
-                lines = []
-                header = " | ".join(df.columns.astype(str))
-                lines.append(header)
+                    raise ValueError("Unsupported format")
+                lines = [" | ".join(df.columns.astype(str))]
                 lines.append("-|-".join(["-" * len(col) for col in df.columns.astype(str)]))
                 for _, row in df.iterrows():
                     lines.append(" | ".join(str(cell) for cell in row))
-                
                 text = "\n".join(lines)
-                metadata = {
-                    "row_count": len(df),
-                    "column_count": len(df.columns),
-                    "columns": list(df.columns)
-                }
+                metadata = {"row_count": len(df), "column_count": len(df.columns), "columns": list(df.columns)}
                 return {"status": "success", "text": text, "metadata": metadata}
             except Exception as e:
                 raise Exception(f"Error: {str(e)}")
@@ -845,14 +809,12 @@ class FileConvertToText:
             self.logger.exception(e)
             return {"status": "error", "text": str(e), "metadata": {}}
 
-    
-    async def read_text_file(self, file_path: str) -> Dict[str, Any]:
+    # --- Text file ---
+    async def read_text_file(self, file_path: str) -> dict:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
-        
         encodings = ['utf-8', 'cp1251', 'latin-1']
-        
         for encoding in encodings:
             try:
                 async with aiofiles.open(file_path, 'r', encoding=encoding) as f:
@@ -869,51 +831,39 @@ class FileConvertToText:
             except Exception as e:
                 self.logger.exception(e)
                 break
-        
         return {"status": "error", "text": "Failed to decode file", "metadata": {}}
 
-
-    async def read_image_to_text(self, file_path: str) -> Dict[str, Any]:
+    # --- Image OCR ---
+    async def read_image_to_text(self, file_path: str) -> dict:
         path = Path(file_path)
-        if not path.exists(): 
+        if not path.exists():
             return {"status": "error", "text": f"File not found: {file_path}", "metadata": {}}
-        
-        if path.stat().st_size > self.MAX_SIZE_BYTES: 
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": f"{path.name}: too large", "metadata": {}}
-        
         if path.suffix.lower() not in self.SUPPORTED_IMAGE_EXTENSIONS:
             return {"status": "error", "text": f"Unsupported image type: {path.suffix}", "metadata": {}}
-        
         if self.ocr_processor is None:
             return {"status": "error", "text": "OCR Processor not initialized", "metadata": {}}
-        
+
         print(f"Starting OCR for: {path.name}")
-        
         result = await self.ocr_processor.perform_ocr_async(str(path))
-        
         if isinstance(result, dict) and result.get('status') == 'success':
-            text = result.get('text', '')
-            metadata = result.get('metadata', {})
-            return {"status": "success", "text": text, "metadata": metadata}
-        
+            return {"status": "success", "text": result.get('text', ''), "metadata": result.get('metadata', {})}
         if isinstance(result, str):
             return {"status": "success", "text": result, "metadata": {"source": "ocr_string"}}
-        
         return {"status": "error", "text": "OCR failed", "metadata": {}}
 
-
-    async def convert_to_text(self, file_path: str) -> Dict[str, Any]:
+    # --- Convert any file ---
+    async def convert_to_text(self, file_path: str) -> dict:
         file_info = await self.get_file_format(file_path)
         if file_info.get("status") == "error":
             return {"status": "error", "text": file_info["error"], "metadata": {}}
-
         ext = file_info.get("extension", "").lower()
-        
-        if ext in self.SUPPORTED_FORMATS['word']: 
+        if ext in self.SUPPORTED_FORMATS['word']:
             return await self.read_word(file_path)
-        elif ext in self.SUPPORTED_FORMATS['pdf']: 
+        elif ext in self.SUPPORTED_FORMATS['pdf']:
             return await self.pdf_to_text_async(file_path)
-        elif ext in self.SUPPORTED_FORMATS['spreadsheet']: 
+        elif ext in self.SUPPORTED_FORMATS['spreadsheet']:
             return await self.read_csv_or_excel(file_path)
         elif ext in self.SUPPORTED_FORMATS['text']:
             return await self.read_text_file(file_path)
@@ -922,11 +872,10 @@ class FileConvertToText:
         else:
             return {"status": "error", "text": f"Unsupported format: {ext}", "metadata": {}}
 
-
-    async def process_multiple_files(self, file_paths: List[str]) -> List[Dict[str, Any]]:
+    # --- Process multiple files ---
+    async def process_multiple_files(self, file_paths: List[str]) -> List[dict]:
         tasks = [self.convert_to_text(fp) for fp in file_paths]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
         processed = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
@@ -935,8 +884,6 @@ class FileConvertToText:
             else:
                 processed.append({**result, "file": file_paths[i]})
         return processed
-    
-
 
 
 
