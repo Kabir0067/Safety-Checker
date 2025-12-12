@@ -19,6 +19,7 @@ import docx
 import pytesseract
 import fitz
 
+
 _pandas_module = None
 _easyocr_module = None
 
@@ -193,6 +194,61 @@ class ProfessionalOCRProcessor:
             self.logger.warning(f"Не удалось сохранить отладочное изображение: {e}")
             return None
 
+    def _rotate_bound(self, image: np.ndarray, angle_degrees: float) -> np.ndarray:
+        (h, w) = image.shape[:2]
+        (cX, cY) = (w // 2, h // 2)
+
+        M = cv2.getRotationMatrix2D((cX, cY), angle_degrees, 1.0)
+        cos = abs(M[0, 0])
+        sin = abs(M[0, 1])
+
+        nW = int((h * sin) + (w * cos))
+        nH = int((h * cos) + (w * sin))
+
+        M[0, 2] += (nW / 2) - cX
+        M[1, 2] += (nH / 2) - cY
+
+        return cv2.warpAffine(image, M, (nW, nH), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+    def _deskew_image(self, image: np.ndarray) -> np.ndarray:
+        try:
+            if image is None:
+                return image
+
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            else:
+                gray = image
+
+            if gray.dtype != np.uint8:
+                gray = cv2.convertScaleAbs(gray)
+
+            # For binary images, invert so text is white for better contour detection
+            work = gray
+            if np.mean(work) > 127:
+                work = cv2.bitwise_not(work)
+
+            thresh = cv2.threshold(work, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+            coords = cv2.findNonZero(thresh)
+            if coords is None:
+                return image
+
+            rect = cv2.minAreaRect(coords)
+            angle = rect[-1]
+            if angle < -45:
+                angle = -(90 + angle)
+            else:
+                angle = -angle
+
+            # Ignore tiny angles
+            if abs(angle) < 0.5 or abs(angle) > 30:
+                return image
+
+            return self._rotate_bound(image, angle)
+        except Exception as e:
+            self.logger.warning(f"Deskew failed: {e}")
+            return image
+
     def advanced_preprocessing(self, image_path: str) -> Optional[np.ndarray]:
         try:
             is_valid, message = self.validate_image(image_path)
@@ -246,6 +302,8 @@ class ProfessionalOCRProcessor:
             cleaned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel_open)
             cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_close)
             cleaned = cv2.medianBlur(cleaned, 3)
+
+            cleaned = self._deskew_image(cleaned)
 
             self.save_debug_image(cleaned, "advanced", Path(image_path).name)
 
@@ -496,29 +554,43 @@ class ProfessionalOCRProcessor:
             'confidence': avg_confidence
         }
     
-    def perform_tesseract_ocr(self, image: np.ndarray) -> Tuple[str, float]:
+    def perform_tesseract_ocr(self, image: np.ndarray, config: Optional[str] = None) -> Tuple[str, float]:
         try:
+            if config is None:
+                config = self.tesseract_config
+
             data = pytesseract.image_to_data(
                 image, 
                 lang=self.languages, 
-                config=self.tesseract_config, 
-                output_type=pytesseract.Output.DATAFRAME
+                config=config, 
+                output_type=pytesseract.Output.DICT
             )
-            
-            data = data[data.conf != -1]
-            data = data.dropna(subset=['text'])
-            
-            reliable_data = data[data.conf / 100 >= self.min_confidence]
-            
-            if reliable_data.empty:
-                full_text = pytesseract.image_to_string(image, lang=self.languages, config=self.tesseract_config)
-                avg_confidence = data['conf'].mean() / 100 if not data.empty else 0.0
+
+            confs: List[float] = []
+            reliable_words: List[str] = []
+            n = len(data.get('text', []))
+            for i in range(n):
+                word = str(data['text'][i]).strip()
+                conf_raw = data['conf'][i]
+                try:
+                    conf_val = float(conf_raw)
+                except Exception:
+                    continue
+
+                if conf_val < 0:
+                    continue
+
+                confs.append(conf_val)
+                if word and (conf_val / 100) >= self.min_confidence:
+                    reliable_words.append(word)
+
+            if not reliable_words:
+                full_text = pytesseract.image_to_string(image, lang=self.languages, config=config)
+                avg_confidence = (float(np.mean(confs)) / 100) if confs else 0.0
                 return full_text, avg_confidence
 
-            text = ' '.join(reliable_data['text'].astype(str))
-            
-            avg_confidence = reliable_data['conf'].mean() / 100
-            
+            text = ' '.join(reliable_words)
+            avg_confidence = (float(np.mean(confs)) / 100) if confs else 0.0
             return text, avg_confidence
             
         except pytesseract.TesseractNotFoundError:
@@ -537,7 +609,7 @@ class ProfessionalOCRProcessor:
         all_results = []
         preprocessing_methods = [
             ("simple", self.simple_preprocessing),
-            ("advanced", self.advanced_preprocessing),  # Removed medium as it's duplicate
+            ("advanced", self.advanced_preprocessing),  
         ]
 
         try:
@@ -551,32 +623,41 @@ class ProfessionalOCRProcessor:
                         
                     image_variants = self.create_image_variants(processed_image)
                     
+                    tesseract_configs = [
+                        '--oem 3 --psm 6',
+                        '--oem 3 --psm 4',
+                        '--oem 3 --psm 3',
+                        '--oem 3 --psm 11',
+                    ]
+
                     for variant_name, variant_image in image_variants:
                         try:
-                            raw_text, avg_confidence = self.perform_tesseract_ocr(variant_image)
-                            
-                            if raw_text and avg_confidence >= self.min_confidence:
+                            for tcfg in tesseract_configs:
+                                raw_text, avg_confidence = self.perform_tesseract_ocr(variant_image, config=tcfg)
+                                if not raw_text:
+                                    continue
+
                                 cleaned_text = self.postprocess_text(raw_text)
                                 quality_scores = self.calculate_text_quality(cleaned_text, avg_confidence)
                                 specific_data = self.extract_specific_data(cleaned_text)
-                                
-                                result_data = {
-                                    'text': cleaned_text,
-                                    'raw_text': raw_text,
-                                    'confidence': avg_confidence,
-                                    'quality_scores': quality_scores,
-                                    'preprocessing_method': method_name,
-                                    'image_variant': variant_name,
-                                    'word_count': len(cleaned_text.split()),
-                                    'character_count': len(cleaned_text),
-                                    'specific_data': specific_data,
-                                }
-                                
-                                all_results.append(result_data)
-                                self.logger.info(
-                                    f"Найден текст ({method_name}, {variant_name}): "
-                                    f" ({avg_confidence:.3f})"
-                                )
+
+                                if cleaned_text and (avg_confidence >= 0.1):
+                                    result_data = {
+                                        'text': cleaned_text,
+                                        'raw_text': raw_text,
+                                        'confidence': avg_confidence,
+                                        'quality_scores': quality_scores,
+                                        'preprocessing_method': method_name,
+                                        'image_variant': f"{variant_name}|{tcfg}",
+                                        'word_count': len(cleaned_text.split()),
+                                        'character_count': len(cleaned_text),
+                                        'specific_data': specific_data,
+                                    }
+
+                                    all_results.append(result_data)
+                                    self.logger.info(
+                                        f"Найден текст ({method_name}, {variant_name}): ({avg_confidence:.3f})"
+                                    )
                                 
                         except Exception as e:
                             self.logger.warning(f"Ошибка при обработке варианта {variant_name}: {e}")
