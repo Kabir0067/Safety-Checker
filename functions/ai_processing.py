@@ -244,7 +244,17 @@ class AsyncAiProcessing:
         if not company_name:
             return None
             
-        cleaned = re.sub(r'^\s*[\"\'\(\)\[\]\{\}]\s*|\s*[\"\'\(\)\[\]\{\}]\s*$', '', str(company_name).strip())
+        cleaned = re.sub(r'^\s*["\'\(\)\[\]\{\}]\s*|\s*["\'\(\)\[\]\{\}]\s*$', '', str(company_name).strip())
+        
+        # Фильтрация фиктивных названий компаний (BR-4 fix)
+        placeholder_patterns = [
+            r'ABC\s*Ltd', r'Sample\s*Company', r'Test\s*Company',
+            r'Dummy\s*Company', r'Example\s*Company', r'Fake\s*Company'
+        ]
+        
+        for pattern in placeholder_patterns:
+            if re.search(pattern, cleaned, re.IGNORECASE):
+                return None
         
         uk_suffixes = [
             'LTD', 'LIMITED', 'PLC', 'PLC.', 'PUBLIC LIMITED COMPANY', 
@@ -294,10 +304,16 @@ class AsyncAiProcessing:
             data["Contact Details"] = None
 
         if data.get("Website Domain"):
-            domain = str(data["Website Domain"])
-            domain = re.sub(r'^(https?://|www\.)', '', domain, flags=re.IGNORECASE)
-            domain = domain.split('/')[0].strip()
-            data["Website Domain"] = domain if domain else None
+            domain = str(data["Website Domain"]).strip()
+            # Проверяем, не является ли это email
+            if '@' not in domain:
+                domain = re.sub(r'^(https?://|www\.)', '', domain, flags=re.IGNORECASE)
+                domain = domain.split('/')[0].strip()
+                data["Website Domain"] = domain if domain else None
+            else:
+                # Если это email, извлекаем доменную часть
+                email_domain = domain.split('@')[1] if '@' in domain else domain
+                data["Website Domain"] = email_domain
         else:
             data["Website Domain"] = None
 
@@ -417,11 +433,75 @@ class AsyncAiProcessing:
     
         start = cleaned.find('{')
         end = cleaned.rfind('}')
-        if start == -1 or end == -1:
+        
+        # Попытка восстановить обрезанный JSON (BR-1 fix)
+        if start != -1 and (end == -1 or end <= start):
+            lines = cleaned.split('\n')
+            brace_count = 0
+            fixed_json = ""
+            for line in lines:
+                brace_count += line.count('{') - line.count('}')
+                fixed_json += line + '\n'
+                if brace_count == 0 and fixed_json.strip().endswith('}'):
+                    cleaned = fixed_json.strip()
+                    break
+            else:
+                # Если не удалось восстановить, пробуем другой подход
+                if end == -1:
+                    cleaned += '}'
+                
+        if start == -1 or cleaned.rfind('}') == -1:
             self.logger.error(f"No JSON brackets found. Text: {cleaned[:300]}")
             return None
-        cleaned = cleaned[start:end+1]
-    
+            
+        json_chars = []
+        brace_count = 0
+        in_string = False
+        escape = False
+        for idx in range(start, len(cleaned)):
+            ch = cleaned[idx]
+            json_chars.append(ch)
+
+            if escape:
+                escape = False
+                continue
+
+            if ch == '\\':
+                escape = True
+                continue
+
+            if ch == '"':
+                in_string = not in_string
+                continue
+
+            if not in_string:
+                if ch == '{':
+                    brace_count += 1
+                elif ch == '}' and brace_count > 0:
+                    brace_count -= 1
+                    if brace_count == 0:
+                        break
+
+        if brace_count > 0:
+            json_chars.extend('}' * brace_count)
+
+        cleaned = ''.join(json_chars)
+        cleaned = self._clean_json(cleaned)
+
+        contact_pattern = re.compile(
+            r'("Contact Details"\s*:\s*")(.+?)(")(?=\s*,\s*"(Responsible Person Full Name|Contract Date|Website Domain|Suspicious Phrases Found|Text Style))',
+            re.DOTALL
+        )
+
+        def _sanitize_contact(match: re.Match) -> str:
+            value = match.group(2)
+            value = value.replace('"', '')
+            value = value.replace('{', '').replace('}', '')
+            value = re.sub(r'\s+', ' ', value).strip().rstrip(',')
+            return f'{match.group(1)}{value}{match.group(3)}'
+
+        cleaned = contact_pattern.sub(_sanitize_contact, cleaned)
+
         try:
             data = json.loads(cleaned)
             return self._normalize_output(data)

@@ -1,14 +1,14 @@
-from typing import Optional, Dict, List, Any,Tuple
+from typing import Optional, Dict, List, Any, Tuple
 from asyncio import Semaphore
 from docx import Document
 import concurrent.futures
 from pathlib import Path
-from PIL import Image, ImageEnhance
-import pandas as pd
+from PIL import Image
+from datetime import datetime
+import importlib
 import numpy as np
 import mimetypes
 import aiofiles
-import easyocr
 import logging
 import asyncio
 import shutil 
@@ -19,9 +19,30 @@ import docx
 import pytesseract
 import fitz
 
+_pandas_module = None
+_easyocr_module = None
 
+def _get_pandas():
+    global _pandas_module
+    if _pandas_module is None:
+        try:
+            _pandas_module = importlib.import_module("pandas")
+        except ImportError as exc:
+            raise RuntimeError(
+                "pandas is required for table processing and DataFrame exports."
+            ) from exc
+    return _pandas_module
 
-
+def _get_easyocr():
+    global _easyocr_module
+    if _easyocr_module is None:
+        try:
+            _easyocr_module = importlib.import_module("easyocr")
+        except ImportError as exc:
+            raise RuntimeError(
+                "easyocr is required for OCR processing."
+            ) from exc
+    return _easyocr_module
 
 class ProfessionalOCRProcessor:
     LOG_DIR = "logs"
@@ -33,13 +54,20 @@ class ProfessionalOCRProcessor:
         min_confidence: float = 0.6,
         gpu: bool = False,
         model_storage_directory: str = None,
-        download_enabled: bool = True
+        download_enabled: bool = True,
+        tesseract_cmd: Optional[str] = None
     ):
+        self._languages_list = list(languages)
         self.languages = "+".join(languages)
         self.min_confidence = min_confidence
         self.supported_formats = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif'}
         
         self.tesseract_config = f'--oem 3 --psm 3'
+        self.tesseract_available = False
+        self.gpu = gpu
+        self.download_enabled = download_enabled
+        self._easyocr_reader = None
+        self._easyocr_unavailable = False
         
         self._setup_logging()
         
@@ -48,11 +76,17 @@ class ProfessionalOCRProcessor:
         os.makedirs("tmp/debug", exist_ok=True)
         
         self.logger.info(f"ProfessionalOCRProcessor инициализирован с языками: {self.languages}")
+
+        self._configure_tesseract(tesseract_cmd)
         try:
             pytesseract.get_tesseract_version()
             self.logger.info(f"Tesseract version: {pytesseract.get_tesseract_version()}")
+            self.tesseract_available = True
         except pytesseract.TesseractNotFoundError:
-            self.logger.error("❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.")
+            self.logger.error(
+                "❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, роҳи иҷроиши tesseract-ро"
+                " дар env-параметри TESSERACT_CMD нишон диҳед ё паролро ба tesseract_cmd диҳед."
+            )
 
     def _setup_logging(self):
         self.logger = logging.getLogger("ProfessionalOCRProcessor")
@@ -70,6 +104,30 @@ class ProfessionalOCRProcessor:
             self.logger.handlers.clear()
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
+
+    def _configure_tesseract(self, tesseract_cmd: Optional[str]):
+        candidates: List[str] = []
+
+        if tesseract_cmd:
+            candidates.append(tesseract_cmd)
+
+        env_cmd = os.getenv("TESSERACT_CMD")
+        if env_cmd:
+            candidates.append(env_cmd)
+
+        default_windows_path = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+        candidates.append(default_windows_path)
+
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                pytesseract.pytesseract.tesseract_cmd = candidate
+                self.logger.info(f"Tesseract path set to: {candidate}")
+                return
+
+        self.logger.warning(
+            "Tesseract executable not found automatically."
+            " Установите переменную окружения TESSERACT_CMD ё передайте tesseract_cmd."
+        )
 
     def cleanup_tmp(self):
         for tmp_dir in ["tmp/processed", "tmp/debug"]:
@@ -195,6 +253,66 @@ class ProfessionalOCRProcessor:
 
         except Exception as e:
             self.logger.exception(f"Ошибка в advanced_preprocessing: {e}")
+            return None
+
+    def _get_easyocr_reader(self):
+        if self._easyocr_unavailable:
+            return None
+
+        if self._easyocr_reader is not None:
+            return self._easyocr_reader
+
+        try:
+            easyocr = _get_easyocr()
+            reader = easyocr.Reader(self._languages_list, gpu=self.gpu, download_enabled=self.download_enabled)
+            self._easyocr_reader = reader
+            return reader
+        except Exception as e:
+            self._easyocr_unavailable = True
+            self.logger.warning(f"EasyOCR reader init failed: {e}")
+            return None
+
+    def perform_easyocr(self, image: np.ndarray) -> Optional[Dict[str, Any]]:
+        reader = self._get_easyocr_reader()
+        if reader is None:
+            return None
+
+        try:
+            results = reader.readtext(image)
+            if not results:
+                return None
+
+            lines = []
+            confidences = []
+            for bbox, text, confidence in results:
+                text = text.strip()
+                if not text:
+                    continue
+                lines.append(text)
+                confidences.append(confidence)
+
+            if not lines:
+                return None
+
+            avg_confidence = float(np.mean(confidences)) if confidences else 0.0
+            text = "\n".join(lines)
+            cleaned_text = self.postprocess_text(text)
+            quality_scores = self.calculate_text_quality(cleaned_text, avg_confidence)
+            specific_data = self.extract_specific_data(cleaned_text)
+
+            return {
+                'text': cleaned_text,
+                'raw_text': text,
+                'confidence': avg_confidence,
+                'quality_scores': quality_scores,
+                'preprocessing_method': 'easyocr',
+                'image_variant': 'raw',
+                'word_count': len(cleaned_text.split()),
+                'character_count': len(cleaned_text),
+                'specific_data': specific_data,
+            }
+        except Exception as e:
+            self.logger.warning(f"EasyOCR failed: {e}")
             return None
 
     def medium_preprocessing(self, image_path: str) -> Optional[np.ndarray]:
@@ -468,6 +586,8 @@ class ProfessionalOCRProcessor:
                     self.logger.exception(f"Ошибка в методе {method_name}: {e}")
                     continue
 
+            original_image = None
+
             if not all_results:
                 self.logger.info("Пробуем фолбэк: обработка без препроцессинга")
                 try:
@@ -493,6 +613,25 @@ class ProfessionalOCRProcessor:
                 except Exception as e:
                     self.logger.error(f"Фолбэк метод не сработал: {e}")
 
+            # EasyOCR fallback for low-confidence or empty results
+            try:
+                if original_image is None:
+                    original_image = self.load_image(file_path)
+                need_easyocr = not all_results
+                best_confidence = 0.0
+                if all_results:
+                    best_confidence = max(r.get('confidence', 0.0) for r in all_results)
+                    if best_confidence < max(self.min_confidence, 0.7):
+                        need_easyocr = True
+
+                if need_easyocr and original_image is not None:
+                    self.logger.info("Запуск EasyOCR как дополнительного распознавания")
+                    easy_result = self.perform_easyocr(original_image)
+                    if easy_result:
+                        all_results.append(easy_result)
+            except Exception as e:
+                self.logger.warning(f"EasyOCR fallback failed: {e}")
+
             if all_results:
                 all_results.sort(key=lambda x: x['quality_scores']['overall'] * x['confidence'], reverse=True)
                 best_result = all_results[0]
@@ -516,7 +655,7 @@ class ProfessionalOCRProcessor:
                     'word_count': best_result['word_count'],
                     'character_count': best_result['character_count'],
                     'all_attempts': len(all_results),
-                    'timestamp': pd.Timestamp.now().isoformat(),
+                    'timestamp': datetime.now().isoformat(),
                     'specific_data': best_result['specific_data']
                 }
             else:
@@ -527,10 +666,11 @@ class ProfessionalOCRProcessor:
                     'confidence': 0.0,
                     'quality_scores': {'overall': 0.0, 'structure': 0.0, 'readability': 0.0},
                     'preprocessing_method': 'none',
+                    'image_variant': 'none',
                     'word_count': 0,
                     'character_count': 0,
-                    'all_attempts': 0,
-                    'timestamp': pd.Timestamp.now().isoformat(),
+                    'all_attempts': len(all_results),
+                    'timestamp': datetime.now().isoformat(),
                     'specific_data': {'phone_numbers': [], 'emails': [], 'domains': []}
                 }
 
@@ -663,7 +803,8 @@ class ProfessionalOCRProcessor:
                             'emails': ', '.join(result['result']['specific_data']['emails']),
                             'domains': ', '.join(result['result']['specific_data']['domains'])
                         })
-                return pd.DataFrame(df_data)
+                pandas = _get_pandas()
+                return pandas.DataFrame(df_data)
             elif output_format == 'text':
                 text_output = []
                 for result in results:
@@ -787,10 +928,11 @@ class FileConvertToText:
 
         def extract_table():
             try:
+                pandas = _get_pandas()
                 if path.suffix.lower() == '.csv':
-                    df = pd.read_csv(path, keep_default_na=False)
+                    df = pandas.read_csv(path, keep_default_na=False)
                 elif path.suffix.lower() in ['.xls', '.xlsx']:
-                    df = pd.read_excel(path, keep_default_na=False)
+                    df = pandas.read_excel(path, keep_default_na=False)
                 else:
                     raise ValueError("Unsupported format")
                 lines = [" | ".join(df.columns.astype(str))]

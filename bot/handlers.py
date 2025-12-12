@@ -15,6 +15,13 @@ import aiofiles
 import aiohttp
 import json
 import os
+import re
+import textwrap
+import time
+import uuid
+import logging
+import hashlib
+import asyncio
 from sqlalchemy import select, delete
 from database.connection import AsyncSessionLocal
 from PIL import Image
@@ -560,7 +567,10 @@ async def process_file(file: types.Document):
     ext = file_meta.get("extension")
     
     text = await converter.convert_to_text(file_path)  
-    if isinstance(text, str) and text.startswith("Ошибка"):
+    if isinstance(text, dict) and text.get("status") == "error":
+        error_msg = text.get("text", "Conversion failed")
+        return None, file_path, {"error": error_msg}
+    elif isinstance(text, str) and text.startswith("Ошибка"):
         return None, file_path, {"error": "Conversion failed"}
     
     return text, file_path, ext
@@ -568,8 +578,19 @@ async def process_file(file: types.Document):
 @bot.message_handler(commands=['check'])
 async def handle_check(message: types.Message):
     user_id = str(message.chat.id)
-    cancel_check(user_id)
     user_lang = await get_lang(user_id) or 'ru'
+    
+    # Проверка, не занят ли пользователь обработкой (BR-5 fix)
+    if user_id in user_state and user_state[user_id].get('processing'):
+        busy_text = {
+            'ru': "⏳ Предыдущая задача на обработку ещё выполняется. Пожалуйста, дождитесь результата.",
+            'tj': "⏳ Вақти коркарди кории қаблӣ ҳанӯз тамом нашудааст. Лутфан мунтазир шавед.",
+            'en': "⏳ A previous processing task is still running. Please wait for it to finish."
+        }
+        await bot.send_message(message.chat.id, busy_text.get(user_lang, busy_text['en']))
+        return
+    
+    cancel_check(user_id)
 
     intro_texts = {
         'ru': (
@@ -666,7 +687,14 @@ async def handle_photo(message: types.Message):
         return
 
     text = await converter.convert_to_text(png_path)
-    if isinstance(text, str) and text.startswith("Ошибка"):
+    if isinstance(text, dict) and text.get("status") == "error":
+        error_msg = text.get("text", "OCR failed")
+        await bot.send_message(message.chat.id, f"❌ {error_msg}")
+        if os.path.exists(png_path):
+            os.remove(png_path)
+        cancel_check(user_id)
+        return
+    elif isinstance(text, str) and text.startswith("Ошибка"):
         await bot.send_message(message.chat.id, "❌ OCR нашуд. Матн аз акс хонда нашуд.")
         if os.path.exists(png_path):
             os.remove(png_path)
@@ -707,7 +735,12 @@ async def handle_document(message: types.Message):
         return
 
     user_state[user_id]['processing'] = True
-    await bot.send_message(message.chat.id, "⏳ Файл коркард мешавад...", reply_markup=ReplyKeyboardRemove())
+    wait_texts = {
+        'ru': "⏳ Файл обрабатывается...",
+        'tj': "⏳ Файл коркард мешавад...",
+        'en': "⏳ File is being processed..."
+    }
+    await bot.send_message(message.chat.id, wait_texts.get(user_lang, wait_texts['en']), reply_markup=ReplyKeyboardRemove())
 
     file_info = await bot.get_file(message.document.file_id)
     file_data = await bot.download_file(file_info.file_path)
@@ -736,7 +769,14 @@ async def handle_document(message: types.Message):
         return
 
     text = await converter.convert_to_text(final_path)
-    if isinstance(text, str) and text.startswith("Ошибка"):
+    if isinstance(text, dict) and text.get("status") == "error":
+        error_msg = text.get("text", "Conversion failed")
+        await bot.send_message(message.chat.id, f"❌ {error_msg}")
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        cancel_check(user_id)
+        return
+    elif isinstance(text, str) and text.startswith("Ошибка"):
         await bot.send_message(message.chat.id, "❌ Матн хонда нашуд.")
         if os.path.exists(final_path):
             os.remove(final_path)
@@ -811,7 +851,23 @@ async def process_contract_text(
     user_lang = await get_lang(user_id) or 'ru'
 
     ai = AsyncAiProcessing(text)
-    ai_result = await ai.get_answer_json_dict()
+    try:
+        # Установить таймаут для AI обработки (BR-6 fix)
+        ai_result = await asyncio.wait_for(ai.get_answer_json_dict(), timeout=60.0)
+    except asyncio.TimeoutError:
+        error_texts = {
+            'ru': "❌ Время обработки истекло. Попробуйте позже.",
+            'tj': "❌ Вақти коркард ба охир расид. Баъдтар такрор кунед.",
+            'en': "❌ Processing timeout. Please try again later."
+        }
+        await bot.send_message(message.chat.id, error_texts.get(user_lang, error_texts['en']))
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        cancel_check(user_id)
+        return
     if not ai_result:
         error_texts = {
             'ru': "❌ Не удалось извлечь данные из текста. Попробуйте другой формат или уточните текст.",

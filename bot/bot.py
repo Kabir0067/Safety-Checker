@@ -19,7 +19,7 @@ FORMATS = {
     '.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif',
     '.docx', '.csv', '.pdf', '.xlsx', '.xls', '.txt' }
 
-MAX_SIZE_BYTES = 10 * 1024 * 1024
+MAX_SIZE_BYTES = 8 * 1024 * 1024
 
 CANCEL_VARIANTS = {
     "❌ Отменить / Cancel",

@@ -4,7 +4,6 @@ from bot.handlers import set_bot_commands
 
 
 
-
 # ----------------------------------run code----------------------------------
 async def main() -> None:
     while True:
@@ -33,4 +32,9 @@ if __name__ == "__main__":
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
 # ----------------------------------------------------------------------------
+
+
+
+
+
 
