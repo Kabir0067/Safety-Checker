@@ -6,6 +6,7 @@ from bot.handlers import set_bot_commands
 
 # ----------------------------------run code----------------------------------
 async def main() -> None:
+    await bot.delete_webhook(drop_pending_updates=True)
     while True:
         try:
             await set_bot_commands(bot)
@@ -14,21 +15,21 @@ async def main() -> None:
                 skip_pending=True,
                 request_timeout=70,
             )
+        except asyncio.CancelledError:
+            await bot.close_session()
+            raise
         except Exception as e:
             err = str(e).lower()
             wait_time = 10 if ("network" in err or "connection" in err) else 5
             print(f"Ошибка в polling, ждём {wait_time} секунд: {e}")
+            await bot.close_session()
+            await bot.delete_webhook(drop_pending_updates=True)
             await asyncio.sleep(wait_time)
 
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("Программа остановлена пользователем")
-    finally:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
 # ----------------------------------------------------------------------------

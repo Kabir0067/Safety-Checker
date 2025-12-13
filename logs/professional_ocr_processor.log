@@ -1,0 +1,37 @@
+2025-12-13 14:06:17,121 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:06:17,121 - ProfessionalOCRProcessor - ERROR - [file_processing.py:55] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.
+2025-12-13 14:07:26,817 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:07:26,817 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:07:40,618 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:07:40,620 - ProfessionalOCRProcessor - ERROR - [file_processing.py:55] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.
+2025-12-13 14:07:51,572 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:07:51,572 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:08:13,446 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:08:13,456 - ProfessionalOCRProcessor - ERROR - [file_processing.py:55] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.
+2025-12-13 14:08:33,073 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:08:33,077 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:08:48,621 - ProfessionalOCRProcessor - INFO - [file_processing.py:50] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:08:48,621 - ProfessionalOCRProcessor - ERROR - [file_processing.py:55] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.
+2025-12-13 14:11:24,938 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:11:24,938 - ProfessionalOCRProcessor - INFO - [file_processing.py:79] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:11:31,928 - ProfessionalOCRProcessor - INFO - [file_processing.py:52] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:11:32,050 - ProfessionalOCRProcessor - INFO - [file_processing.py:86] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:11:32,050 - ProfessionalOCRProcessor - INFO - [file_processing.py:86] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:12:23,725 - ProfessionalOCRProcessor - INFO - [file_processing.py:52] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:12:23,853 - ProfessionalOCRProcessor - INFO - [file_processing.py:86] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:12:23,853 - ProfessionalOCRProcessor - INFO - [file_processing.py:86] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:13:16,774 - ProfessionalOCRProcessor - INFO - [file_processing.py:52] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:13:16,776 - ProfessionalOCRProcessor - INFO - [file_processing.py:87] - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2025-12-13 14:13:17,655 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - Tesseract version: 5.3.0.20221214
+2025-12-13 14:14:29,046 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:14:29,049 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:16:20,659 - ProfessionalOCRProcessor - INFO - [file_processing.py:52] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:16:20,661 - ProfessionalOCRProcessor - INFO - [file_processing.py:87] - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2025-12-13 14:16:20,699 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - Tesseract version: 5.3.0.20221214
+2025-12-13 14:24:59,522 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:24:59,522 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/debug
+2025-12-13 14:25:09,448 - ProfessionalOCRProcessor - INFO - [file_processing.py:52] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2025-12-13 14:25:09,448 - ProfessionalOCRProcessor - INFO - [file_processing.py:87] - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2025-12-13 14:25:09,701 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - Tesseract version: 5.3.0.20221214
+2025-12-13 14:25:20,424 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/processed
+2025-12-13 14:25:20,424 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/debug

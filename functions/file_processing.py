@@ -33,13 +33,15 @@ class ProfessionalOCRProcessor:
         min_confidence: float = 0.6,
         gpu: bool = False,
         model_storage_directory: str = None,
-        download_enabled: bool = True
+        download_enabled: bool = True,
+        tesseract_cmd: Optional[str] = None
     ):
         self.languages = "+".join(languages)
         self.min_confidence = min_confidence
         self.supported_formats = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif'}
         
         self.tesseract_config = f'--oem 3 --psm 3'
+        self.tesseract_available = False
         
         self._setup_logging()
         
@@ -48,11 +50,47 @@ class ProfessionalOCRProcessor:
         os.makedirs("tmp/debug", exist_ok=True)
         
         self.logger.info(f"ProfessionalOCRProcessor инициализирован с языками: {self.languages}")
+        self._configure_tesseract(tesseract_cmd)
         try:
             pytesseract.get_tesseract_version()
             self.logger.info(f"Tesseract version: {pytesseract.get_tesseract_version()}")
+            self.tesseract_available = True
         except pytesseract.TesseractNotFoundError:
-            self.logger.error("❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.")
+            self.logger.error(
+                "❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, env-параметри TESSERACT_CMD-ро "
+                "насб кунед ё паролро ба tesseract_cmd диҳед."
+            )
+
+    def _configure_tesseract(self, tesseract_cmd: Optional[str]) -> None:
+        candidates: List[str] = []
+
+        if tesseract_cmd:
+            candidates.append(tesseract_cmd)
+
+        env_cmd = os.getenv("TESSERACT_CMD")
+        if env_cmd:
+            candidates.append(env_cmd)
+
+        path_candidate = shutil.which("tesseract")
+        if path_candidate:
+            candidates.append(path_candidate)
+
+        candidates.extend([
+            r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+            r"C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe",
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "Tesseract-OCR", "tesseract.exe"),
+        ])
+
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate):
+                pytesseract.pytesseract.tesseract_cmd = candidate
+                self.logger.info(f"Tesseract path set to: {candidate}")
+                return
+
+        self.logger.warning(
+            "Tesseract executable not found automatically."
+            " Установите переменную окружения TESSERACT_CMD ё передайте tesseract_cmd."
+        )
 
     def _setup_logging(self):
         self.logger = logging.getLogger("ProfessionalOCRProcessor")
