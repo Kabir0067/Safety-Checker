@@ -379,13 +379,23 @@ class AsyncAiProcessing:
             try:
                 async with session.post(url, json=payload, timeout=60, headers=headers) as response:
                     if response.status == 429:
-                        wait_time = 60 * (attempt + 1)
-                        print(f"Waiting: Лимит зиёд. Мунтазир {wait_time} сония...")
+                        wait_time = min(5 * (attempt + 1), 15)
+                        self.logger.warning(
+                            "Rate limit hit from %s (attempt %s). Waiting %s seconds before retry.",
+                            provider,
+                            attempt + 1,
+                            wait_time,
+                        )
                         await asyncio.sleep(wait_time)
                         return await self._make_async_request(model_name, provider, attempt + 1)
                     if response.status == 503:
-                        wait_time = 30 * (attempt + 1)
-                        print(f"Waiting: Хизмат дастнорас. Мунтазир {wait_time} сония...")
+                        wait_time = min(3 * (attempt + 1), 12)
+                        self.logger.warning(
+                            "Service unavailable from %s (attempt %s). Waiting %s seconds before retry.",
+                            provider,
+                            attempt + 1,
+                            wait_time,
+                        )
                         await asyncio.sleep(wait_time)
                         return await self._make_async_request(model_name, provider, attempt + 1)
                     if response.status != 200:
@@ -414,8 +424,7 @@ class AsyncAiProcessing:
                     return await self._process_response_text(text)
 
             except asyncio.TimeoutError:
-                print(f"Error: Тайм-аут дар дархост {attempt + 1}")
-                self.logger.exception("Timeout in request")
+                self.logger.warning("Timeout waiting for %s response on attempt %s", provider, attempt + 1)
                 return await self._make_async_request(model_name, provider, attempt + 1)
             except Exception as e:
                 print(f"Error: Хато дар дархост: {e}")
@@ -553,7 +562,6 @@ class AsyncAiProcessing:
         tasks = [AsyncAiProcessing(c).get_answer_json_dict() for c in contracts]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return [None if isinstance(r, Exception) else r for r in results]
-
 
 
 
