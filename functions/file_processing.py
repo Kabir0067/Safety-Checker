@@ -1,14 +1,14 @@
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any,Tuple
 from asyncio import Semaphore
 from docx import Document
 import concurrent.futures
 from pathlib import Path
-from PIL import Image
-from datetime import datetime
-import importlib
+from PIL import Image, ImageEnhance
+import pandas as pd
 import numpy as np
 import mimetypes
 import aiofiles
+import easyocr
 import logging
 import asyncio
 import shutil 
@@ -20,30 +20,8 @@ import pytesseract
 import fitz
 
 
-_pandas_module = None
-_easyocr_module = None
 
-def _get_pandas():
-    global _pandas_module
-    if _pandas_module is None:
-        try:
-            _pandas_module = importlib.import_module("pandas")
-        except ImportError as exc:
-            raise RuntimeError(
-                "pandas is required for table processing and DataFrame exports."
-            ) from exc
-    return _pandas_module
 
-def _get_easyocr():
-    global _easyocr_module
-    if _easyocr_module is None:
-        try:
-            _easyocr_module = importlib.import_module("easyocr")
-        except ImportError as exc:
-            raise RuntimeError(
-                "easyocr is required for OCR processing."
-            ) from exc
-    return _easyocr_module
 
 class ProfessionalOCRProcessor:
     LOG_DIR = "logs"
@@ -55,20 +33,13 @@ class ProfessionalOCRProcessor:
         min_confidence: float = 0.6,
         gpu: bool = False,
         model_storage_directory: str = None,
-        download_enabled: bool = True,
-        tesseract_cmd: Optional[str] = None
+        download_enabled: bool = True
     ):
-        self._languages_list = list(languages)
         self.languages = "+".join(languages)
         self.min_confidence = min_confidence
         self.supported_formats = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif'}
         
         self.tesseract_config = f'--oem 3 --psm 3'
-        self.tesseract_available = False
-        self.gpu = gpu
-        self.download_enabled = download_enabled
-        self._easyocr_reader = None
-        self._easyocr_unavailable = False
         
         self._setup_logging()
         
@@ -77,17 +48,11 @@ class ProfessionalOCRProcessor:
         os.makedirs("tmp/debug", exist_ok=True)
         
         self.logger.info(f"ProfessionalOCRProcessor инициализирован с языками: {self.languages}")
-
-        self._configure_tesseract(tesseract_cmd)
         try:
             pytesseract.get_tesseract_version()
             self.logger.info(f"Tesseract version: {pytesseract.get_tesseract_version()}")
-            self.tesseract_available = True
         except pytesseract.TesseractNotFoundError:
-            self.logger.error(
-                "❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, роҳи иҷроиши tesseract-ро"
-                " дар env-параметри TESSERACT_CMD нишон диҳед ё паролро ба tesseract_cmd диҳед."
-            )
+            self.logger.error("❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, пеш аз идома додан Tesseract-ро насб кунед.")
 
     def _setup_logging(self):
         self.logger = logging.getLogger("ProfessionalOCRProcessor")
@@ -105,30 +70,6 @@ class ProfessionalOCRProcessor:
             self.logger.handlers.clear()
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
-
-    def _configure_tesseract(self, tesseract_cmd: Optional[str]):
-        candidates: List[str] = []
-
-        if tesseract_cmd:
-            candidates.append(tesseract_cmd)
-
-        env_cmd = os.getenv("TESSERACT_CMD")
-        if env_cmd:
-            candidates.append(env_cmd)
-
-        default_windows_path = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-        candidates.append(default_windows_path)
-
-        for candidate in candidates:
-            if candidate and os.path.isfile(candidate):
-                pytesseract.pytesseract.tesseract_cmd = candidate
-                self.logger.info(f"Tesseract path set to: {candidate}")
-                return
-
-        self.logger.warning(
-            "Tesseract executable not found automatically."
-            " Установите переменную окружения TESSERACT_CMD ё передайте tesseract_cmd."
-        )
 
     def cleanup_tmp(self):
         for tmp_dir in ["tmp/processed", "tmp/debug"]:
@@ -194,61 +135,6 @@ class ProfessionalOCRProcessor:
             self.logger.warning(f"Не удалось сохранить отладочное изображение: {e}")
             return None
 
-    def _rotate_bound(self, image: np.ndarray, angle_degrees: float) -> np.ndarray:
-        (h, w) = image.shape[:2]
-        (cX, cY) = (w // 2, h // 2)
-
-        M = cv2.getRotationMatrix2D((cX, cY), angle_degrees, 1.0)
-        cos = abs(M[0, 0])
-        sin = abs(M[0, 1])
-
-        nW = int((h * sin) + (w * cos))
-        nH = int((h * cos) + (w * sin))
-
-        M[0, 2] += (nW / 2) - cX
-        M[1, 2] += (nH / 2) - cY
-
-        return cv2.warpAffine(image, M, (nW, nH), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-
-    def _deskew_image(self, image: np.ndarray) -> np.ndarray:
-        try:
-            if image is None:
-                return image
-
-            if len(image.shape) == 3:
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = image
-
-            if gray.dtype != np.uint8:
-                gray = cv2.convertScaleAbs(gray)
-
-            # For binary images, invert so text is white for better contour detection
-            work = gray
-            if np.mean(work) > 127:
-                work = cv2.bitwise_not(work)
-
-            thresh = cv2.threshold(work, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-            coords = cv2.findNonZero(thresh)
-            if coords is None:
-                return image
-
-            rect = cv2.minAreaRect(coords)
-            angle = rect[-1]
-            if angle < -45:
-                angle = -(90 + angle)
-            else:
-                angle = -angle
-
-            # Ignore tiny angles
-            if abs(angle) < 0.5 or abs(angle) > 30:
-                return image
-
-            return self._rotate_bound(image, angle)
-        except Exception as e:
-            self.logger.warning(f"Deskew failed: {e}")
-            return image
-
     def advanced_preprocessing(self, image_path: str) -> Optional[np.ndarray]:
         try:
             is_valid, message = self.validate_image(image_path)
@@ -303,74 +189,12 @@ class ProfessionalOCRProcessor:
             cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel_close)
             cleaned = cv2.medianBlur(cleaned, 3)
 
-            cleaned = self._deskew_image(cleaned)
-
             self.save_debug_image(cleaned, "advanced", Path(image_path).name)
 
             return cleaned
 
         except Exception as e:
             self.logger.exception(f"Ошибка в advanced_preprocessing: {e}")
-            return None
-
-    def _get_easyocr_reader(self):
-        if self._easyocr_unavailable:
-            return None
-
-        if self._easyocr_reader is not None:
-            return self._easyocr_reader
-
-        try:
-            easyocr = _get_easyocr()
-            reader = easyocr.Reader(self._languages_list, gpu=self.gpu, download_enabled=self.download_enabled)
-            self._easyocr_reader = reader
-            return reader
-        except Exception as e:
-            self._easyocr_unavailable = True
-            self.logger.warning(f"EasyOCR reader init failed: {e}")
-            return None
-
-    def perform_easyocr(self, image: np.ndarray) -> Optional[Dict[str, Any]]:
-        reader = self._get_easyocr_reader()
-        if reader is None:
-            return None
-
-        try:
-            results = reader.readtext(image)
-            if not results:
-                return None
-
-            lines = []
-            confidences = []
-            for bbox, text, confidence in results:
-                text = text.strip()
-                if not text:
-                    continue
-                lines.append(text)
-                confidences.append(confidence)
-
-            if not lines:
-                return None
-
-            avg_confidence = float(np.mean(confidences)) if confidences else 0.0
-            text = "\n".join(lines)
-            cleaned_text = self.postprocess_text(text)
-            quality_scores = self.calculate_text_quality(cleaned_text, avg_confidence)
-            specific_data = self.extract_specific_data(cleaned_text)
-
-            return {
-                'text': cleaned_text,
-                'raw_text': text,
-                'confidence': avg_confidence,
-                'quality_scores': quality_scores,
-                'preprocessing_method': 'easyocr',
-                'image_variant': 'raw',
-                'word_count': len(cleaned_text.split()),
-                'character_count': len(cleaned_text),
-                'specific_data': specific_data,
-            }
-        except Exception as e:
-            self.logger.warning(f"EasyOCR failed: {e}")
             return None
 
     def medium_preprocessing(self, image_path: str) -> Optional[np.ndarray]:
@@ -554,43 +378,29 @@ class ProfessionalOCRProcessor:
             'confidence': avg_confidence
         }
     
-    def perform_tesseract_ocr(self, image: np.ndarray, config: Optional[str] = None) -> Tuple[str, float]:
+    def perform_tesseract_ocr(self, image: np.ndarray) -> Tuple[str, float]:
         try:
-            if config is None:
-                config = self.tesseract_config
-
             data = pytesseract.image_to_data(
                 image, 
                 lang=self.languages, 
-                config=config, 
-                output_type=pytesseract.Output.DICT
+                config=self.tesseract_config, 
+                output_type=pytesseract.Output.DATAFRAME
             )
-
-            confs: List[float] = []
-            reliable_words: List[str] = []
-            n = len(data.get('text', []))
-            for i in range(n):
-                word = str(data['text'][i]).strip()
-                conf_raw = data['conf'][i]
-                try:
-                    conf_val = float(conf_raw)
-                except Exception:
-                    continue
-
-                if conf_val < 0:
-                    continue
-
-                confs.append(conf_val)
-                if word and (conf_val / 100) >= self.min_confidence:
-                    reliable_words.append(word)
-
-            if not reliable_words:
-                full_text = pytesseract.image_to_string(image, lang=self.languages, config=config)
-                avg_confidence = (float(np.mean(confs)) / 100) if confs else 0.0
+            
+            data = data[data.conf != -1]
+            data = data.dropna(subset=['text'])
+            
+            reliable_data = data[data.conf / 100 >= self.min_confidence]
+            
+            if reliable_data.empty:
+                full_text = pytesseract.image_to_string(image, lang=self.languages, config=self.tesseract_config)
+                avg_confidence = data['conf'].mean() / 100 if not data.empty else 0.0
                 return full_text, avg_confidence
 
-            text = ' '.join(reliable_words)
-            avg_confidence = (float(np.mean(confs)) / 100) if confs else 0.0
+            text = ' '.join(reliable_data['text'].astype(str))
+            
+            avg_confidence = reliable_data['conf'].mean() / 100
+            
             return text, avg_confidence
             
         except pytesseract.TesseractNotFoundError:
@@ -609,7 +419,7 @@ class ProfessionalOCRProcessor:
         all_results = []
         preprocessing_methods = [
             ("simple", self.simple_preprocessing),
-            ("advanced", self.advanced_preprocessing),  
+            ("advanced", self.advanced_preprocessing),  # Removed medium as it's duplicate
         ]
 
         try:
@@ -623,41 +433,32 @@ class ProfessionalOCRProcessor:
                         
                     image_variants = self.create_image_variants(processed_image)
                     
-                    tesseract_configs = [
-                        '--oem 3 --psm 6',
-                        '--oem 3 --psm 4',
-                        '--oem 3 --psm 3',
-                        '--oem 3 --psm 11',
-                    ]
-
                     for variant_name, variant_image in image_variants:
                         try:
-                            for tcfg in tesseract_configs:
-                                raw_text, avg_confidence = self.perform_tesseract_ocr(variant_image, config=tcfg)
-                                if not raw_text:
-                                    continue
-
+                            raw_text, avg_confidence = self.perform_tesseract_ocr(variant_image)
+                            
+                            if raw_text and avg_confidence >= self.min_confidence:
                                 cleaned_text = self.postprocess_text(raw_text)
                                 quality_scores = self.calculate_text_quality(cleaned_text, avg_confidence)
                                 specific_data = self.extract_specific_data(cleaned_text)
-
-                                if cleaned_text and (avg_confidence >= 0.1):
-                                    result_data = {
-                                        'text': cleaned_text,
-                                        'raw_text': raw_text,
-                                        'confidence': avg_confidence,
-                                        'quality_scores': quality_scores,
-                                        'preprocessing_method': method_name,
-                                        'image_variant': f"{variant_name}|{tcfg}",
-                                        'word_count': len(cleaned_text.split()),
-                                        'character_count': len(cleaned_text),
-                                        'specific_data': specific_data,
-                                    }
-
-                                    all_results.append(result_data)
-                                    self.logger.info(
-                                        f"Найден текст ({method_name}, {variant_name}): ({avg_confidence:.3f})"
-                                    )
+                                
+                                result_data = {
+                                    'text': cleaned_text,
+                                    'raw_text': raw_text,
+                                    'confidence': avg_confidence,
+                                    'quality_scores': quality_scores,
+                                    'preprocessing_method': method_name,
+                                    'image_variant': variant_name,
+                                    'word_count': len(cleaned_text.split()),
+                                    'character_count': len(cleaned_text),
+                                    'specific_data': specific_data,
+                                }
+                                
+                                all_results.append(result_data)
+                                self.logger.info(
+                                    f"Найден текст ({method_name}, {variant_name}): "
+                                    f" ({avg_confidence:.3f})"
+                                )
                                 
                         except Exception as e:
                             self.logger.warning(f"Ошибка при обработке варианта {variant_name}: {e}")
@@ -666,8 +467,6 @@ class ProfessionalOCRProcessor:
                 except Exception as e:
                     self.logger.exception(f"Ошибка в методе {method_name}: {e}")
                     continue
-
-            original_image = None
 
             if not all_results:
                 self.logger.info("Пробуем фолбэк: обработка без препроцессинга")
@@ -694,25 +493,6 @@ class ProfessionalOCRProcessor:
                 except Exception as e:
                     self.logger.error(f"Фолбэк метод не сработал: {e}")
 
-            # EasyOCR fallback for low-confidence or empty results
-            try:
-                if original_image is None:
-                    original_image = self.load_image(file_path)
-                need_easyocr = not all_results
-                best_confidence = 0.0
-                if all_results:
-                    best_confidence = max(r.get('confidence', 0.0) for r in all_results)
-                    if best_confidence < max(self.min_confidence, 0.7):
-                        need_easyocr = True
-
-                if need_easyocr and original_image is not None:
-                    self.logger.info("Запуск EasyOCR как дополнительного распознавания")
-                    easy_result = self.perform_easyocr(original_image)
-                    if easy_result:
-                        all_results.append(easy_result)
-            except Exception as e:
-                self.logger.warning(f"EasyOCR fallback failed: {e}")
-
             if all_results:
                 all_results.sort(key=lambda x: x['quality_scores']['overall'] * x['confidence'], reverse=True)
                 best_result = all_results[0]
@@ -736,7 +516,7 @@ class ProfessionalOCRProcessor:
                     'word_count': best_result['word_count'],
                     'character_count': best_result['character_count'],
                     'all_attempts': len(all_results),
-                    'timestamp': datetime.now().isoformat(),
+                    'timestamp': pd.Timestamp.now().isoformat(),
                     'specific_data': best_result['specific_data']
                 }
             else:
@@ -747,11 +527,10 @@ class ProfessionalOCRProcessor:
                     'confidence': 0.0,
                     'quality_scores': {'overall': 0.0, 'structure': 0.0, 'readability': 0.0},
                     'preprocessing_method': 'none',
-                    'image_variant': 'none',
                     'word_count': 0,
                     'character_count': 0,
-                    'all_attempts': len(all_results),
-                    'timestamp': datetime.now().isoformat(),
+                    'all_attempts': 0,
+                    'timestamp': pd.Timestamp.now().isoformat(),
                     'specific_data': {'phone_numbers': [], 'emails': [], 'domains': []}
                 }
 
@@ -884,8 +663,7 @@ class ProfessionalOCRProcessor:
                             'emails': ', '.join(result['result']['specific_data']['emails']),
                             'domains': ', '.join(result['result']['specific_data']['domains'])
                         })
-                pandas = _get_pandas()
-                return pandas.DataFrame(df_data)
+                return pd.DataFrame(df_data)
             elif output_format == 'text':
                 text_output = []
                 for result in results:
@@ -922,11 +700,11 @@ class FileConvertToText:
         'image': SUPPORTED_IMAGE_EXTENSIONS
     }
     LOG_DIR = "logs"
+    LOG_FILE = os.path.join(LOG_DIR, "file_convert_to_text_errors.log")
 
     def __init__(self):
         os.makedirs(self.FILES_DIR, exist_ok=True)
         os.makedirs(self.LOG_DIR, exist_ok=True)
-        self.LOG_FILE = os.path.join(self.LOG_DIR, "file_convert_to_text_errors.log")
         self.logger = logging.getLogger("FileConvertToText")
         self.logger.setLevel(logging.ERROR)
         handler = logging.FileHandler(self.LOG_FILE)
@@ -934,40 +712,51 @@ class FileConvertToText:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
-
         self.ocr_processor = ProfessionalOCRProcessor(
             languages=['eng', 'rus'],
             min_confidence=0.5
             )
 
-    # --- File info ---
     async def get_file_format(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"error": "File does not exist", "status": "error"}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
+        
+        file_size = path.stat().st_size
+        if file_size > self.MAX_SIZE_BYTES:
             return {"error": "File is too large (max 10 MB)", "status": "error"}
+        
         mime_type, _ = mimetypes.guess_type(file_path)
+        file_extension = str(path.suffix.lower())
+        
         return {
             "status": "success",
-            "extension": path.suffix.lower(),
+            "extension": file_extension,
             "mime_type": mime_type or "unknown",
-            "size_bytes": path.stat().st_size,
-            "size_human": f"{path.stat().st_size / (1024 * 1024):.2f} MB"
+            "size_bytes": file_size,
+            "size_human": f"{file_size / (1024 * 1024):.2f} MB"
         }
 
-    # --- Word ---
-    async def read_word(self, file_path: str) -> dict:
+  
+    async def read_word(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
+
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
+
+    async def extract_docx_async(self, file_path: str) -> Dict[str, Any]:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
         def extract_docx():
             try:
                 doc = docx.Document(str(path))
-                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                paragraphs = [p.text if p.text.strip() else "" for p in doc.paragraphs]
                 text = "\n".join(paragraphs)
                 metadata = {
                     "paragraph_count": len(paragraphs),
@@ -978,50 +767,74 @@ class FileConvertToText:
             except Exception as e:
                 return {"status": "error", "text": f"python-docx failed: {str(e)}", "metadata": {}}
 
-        return await asyncio.to_thread(extract_docx)
+        try:
+            return await asyncio.to_thread(extract_docx)
+        except Exception as e:
+            return {"status": "error", "text": f"Error: {str(e)}", "metadata": {}}
 
-    # --- PDF ---
-    async def pdf_to_text_async(self, file_path: str) -> dict:
+    async def pdf_to_text_async(self, file_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
-            return {"status": "error", "text": "File does not exist", "metadata": {}}
+            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
         if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
-        def extract_pdf():
+        def convert_pdf():
             try:
                 doc = fitz.open(str(path))
                 text = "".join([page.get_text() for page in doc])
-                metadata = {"page_count": len(doc), "source": "PyMuPDF"}
-                return {"status": "success", "text": text, "metadata": metadata}
+                return {"status": "success", "text": text, "metadata": {"page_count": len(doc)}}
             except Exception as e:
-                return {"status": "error", "text": f"PDF read failed: {str(e)}", "metadata": {}}
+                return {"status": "error", "text": str(e), "metadata": {}}
 
-        return await asyncio.to_thread(extract_pdf)
+        return await asyncio.to_thread(convert_pdf)
 
-    # --- CSV / Excel ---
-    async def read_csv_or_excel(self, file_path: str) -> dict:
+    async def docx_to_text_async(self, file_path: str) -> Dict[str, Any]:
+        path = Path(file_path)
+        if not path.exists() or not path.is_file():
+            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
+        if path.stat().st_size > self.MAX_SIZE_BYTES:
+            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
+
+        def convert_docx():
+            try:
+                doc = docx.Document(str(path))
+                text = "\n".join([p.text for p in doc.paragraphs])
+                return {"status": "success", "text": text, "metadata": {"paragraphs": len(doc.paragraphs)}}
+            except Exception as e:
+                return {"status": "error", "text": str(e), "metadata": {}}
+
+        return await asyncio.to_thread(convert_docx)
+    async def read_csv_or_excel(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
+            
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
 
         def extract_table():
             try:
-                pandas = _get_pandas()
                 if path.suffix.lower() == '.csv':
-                    df = pandas.read_csv(path, keep_default_na=False)
+                    df = pd.read_csv(path, keep_default_na=False)
                 elif path.suffix.lower() in ['.xls', '.xlsx']:
-                    df = pandas.read_excel(path, keep_default_na=False)
+                    df = pd.read_excel(path, keep_default_na=False)
                 else:
-                    raise ValueError("Unsupported format")
-                lines = [" | ".join(df.columns.astype(str))]
+                    raise ValueError("Unsupported")
+
+                lines = []
+                header = " | ".join(df.columns.astype(str))
+                lines.append(header)
                 lines.append("-|-".join(["-" * len(col) for col in df.columns.astype(str)]))
                 for _, row in df.iterrows():
                     lines.append(" | ".join(str(cell) for cell in row))
+                
                 text = "\n".join(lines)
-                metadata = {"row_count": len(df), "column_count": len(df.columns), "columns": list(df.columns)}
+                metadata = {
+                    "row_count": len(df),
+                    "column_count": len(df.columns),
+                    "columns": list(df.columns)
+                }
                 return {"status": "success", "text": text, "metadata": metadata}
             except Exception as e:
                 raise Exception(f"Error: {str(e)}")
@@ -1032,12 +845,14 @@ class FileConvertToText:
             self.logger.exception(e)
             return {"status": "error", "text": str(e), "metadata": {}}
 
-    # --- Text file ---
-    async def read_text_file(self, file_path: str) -> dict:
+    
+    async def read_text_file(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": "File does not exist", "metadata": {}}
+        
         encodings = ['utf-8', 'cp1251', 'latin-1']
+        
         for encoding in encodings:
             try:
                 async with aiofiles.open(file_path, 'r', encoding=encoding) as f:
@@ -1054,39 +869,51 @@ class FileConvertToText:
             except Exception as e:
                 self.logger.exception(e)
                 break
+        
         return {"status": "error", "text": "Failed to decode file", "metadata": {}}
 
-    # --- Image OCR ---
-    async def read_image_to_text(self, file_path: str) -> dict:
+
+    async def read_image_to_text(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
-        if not path.exists():
+        if not path.exists(): 
             return {"status": "error", "text": f"File not found: {file_path}", "metadata": {}}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
+        
+        if path.stat().st_size > self.MAX_SIZE_BYTES: 
             return {"status": "error", "text": f"{path.name}: too large", "metadata": {}}
+        
         if path.suffix.lower() not in self.SUPPORTED_IMAGE_EXTENSIONS:
             return {"status": "error", "text": f"Unsupported image type: {path.suffix}", "metadata": {}}
+        
         if self.ocr_processor is None:
             return {"status": "error", "text": "OCR Processor not initialized", "metadata": {}}
-
+        
         print(f"Starting OCR for: {path.name}")
+        
         result = await self.ocr_processor.perform_ocr_async(str(path))
+        
         if isinstance(result, dict) and result.get('status') == 'success':
-            return {"status": "success", "text": result.get('text', ''), "metadata": result.get('metadata', {})}
+            text = result.get('text', '')
+            metadata = result.get('metadata', {})
+            return {"status": "success", "text": text, "metadata": metadata}
+        
         if isinstance(result, str):
             return {"status": "success", "text": result, "metadata": {"source": "ocr_string"}}
+        
         return {"status": "error", "text": "OCR failed", "metadata": {}}
 
-    # --- Convert any file ---
-    async def convert_to_text(self, file_path: str) -> dict:
+
+    async def convert_to_text(self, file_path: str) -> Dict[str, Any]:
         file_info = await self.get_file_format(file_path)
         if file_info.get("status") == "error":
             return {"status": "error", "text": file_info["error"], "metadata": {}}
+
         ext = file_info.get("extension", "").lower()
-        if ext in self.SUPPORTED_FORMATS['word']:
+        
+        if ext in self.SUPPORTED_FORMATS['word']: 
             return await self.read_word(file_path)
-        elif ext in self.SUPPORTED_FORMATS['pdf']:
+        elif ext in self.SUPPORTED_FORMATS['pdf']: 
             return await self.pdf_to_text_async(file_path)
-        elif ext in self.SUPPORTED_FORMATS['spreadsheet']:
+        elif ext in self.SUPPORTED_FORMATS['spreadsheet']: 
             return await self.read_csv_or_excel(file_path)
         elif ext in self.SUPPORTED_FORMATS['text']:
             return await self.read_text_file(file_path)
@@ -1095,10 +922,11 @@ class FileConvertToText:
         else:
             return {"status": "error", "text": f"Unsupported format: {ext}", "metadata": {}}
 
-    # --- Process multiple files ---
-    async def process_multiple_files(self, file_paths: List[str]) -> List[dict]:
+
+    async def process_multiple_files(self, file_paths: List[str]) -> List[Dict[str, Any]]:
         tasks = [self.convert_to_text(fp) for fp in file_paths]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        
         processed = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
@@ -1107,6 +935,8 @@ class FileConvertToText:
             else:
                 processed.append({**result, "file": file_paths[i]})
         return processed
+    
+
 
 
 
