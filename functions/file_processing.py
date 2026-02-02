@@ -69,6 +69,8 @@ class ProfessionalOCRProcessor:
 
         env_cmd = os.getenv("TESSERACT_CMD")
         if env_cmd:
+            # Clean up potential quote issues from .env
+            env_cmd = env_cmd.strip("'\"")
             candidates.append(env_cmd)
 
         path_candidate = shutil.which("tesseract")

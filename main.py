@@ -4,8 +4,11 @@ from bot.handlers import set_bot_commands
 
 
 
+from dotenv import load_dotenv
+
 # ----------------------------------run code----------------------------------
 async def main() -> None:
+    load_dotenv()
     await bot.delete_webhook(drop_pending_updates=True)
     while True:
         try:
