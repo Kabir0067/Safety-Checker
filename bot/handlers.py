@@ -910,8 +910,8 @@ async def process_contract_text(
                 'phone_number': None,
             }
             company_id = await add_company(payload)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Error adding company: {e}")
 
     contract_date_db = None
     try:
@@ -925,8 +925,8 @@ async def process_contract_text(
                     break
                 except ValueError:
                     continue
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Error parsing date: {e}")
 
     try:
         await add_user_check({
@@ -942,8 +942,8 @@ async def process_contract_text(
             'safety_rating': status,
             'detailed_scores': detailed_report.get('detailed_scores', {})
         })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Error adding user check: {e}")
 
     try:
         suspicious = (total_score < 50 or
@@ -965,8 +965,8 @@ async def process_contract_text(
                     'contact_email': None,
                     'added_by': user_db_id
                 })
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"❌ Error adding suspicious company: {e}")
 
     input_label = {
         'ru': f"📄 Формат: {file_type}" if file_type else "📄 Ввод: Текст",
