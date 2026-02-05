@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import mimetypes
 import aiofiles
-import easyocr
+# import easyocr
 import logging
 import asyncio
 import shutil 
@@ -18,6 +18,9 @@ import re
 import docx   
 import pytesseract
 import fitz
+from pdf2image import convert_from_path
+import zipfile
+import io
 
 
 
@@ -62,6 +65,12 @@ class ProfessionalOCRProcessor:
             )
 
     def _configure_tesseract(self, tesseract_cmd: Optional[str]) -> None:
+        if os.name != 'nt':  # Linux/Unix specific checks
+            self.logger.info("Configuring for Linux Environment")
+            # Check for poppler
+            if not shutil.which("pdftoppm"):
+                 self.logger.error("❌ Poppler (pdftoppm) not found. Install it: sudo apt-get install poppler-utils")
+        
         candidates: List[str] = []
 
         if tesseract_cmd:
@@ -579,6 +588,22 @@ class ProfessionalOCRProcessor:
         finally:
             self.cleanup_tmp()
 
+    def convert_pdf_to_images(self, pdf_path: str) -> List[np.ndarray]:
+        try:
+            self.logger.info(f"Converting PDF to images: {pdf_path}")
+            images = convert_from_path(pdf_path)
+            cv_images = []
+            for img in images:
+                # Convert PIL to CV2
+                open_cv_image = np.array(img) 
+                # Convert RGB to BGR 
+                open_cv_image = open_cv_image[:, :, ::-1].copy() 
+                cv_images.append(open_cv_image)
+            return cv_images
+        except Exception as e:
+            self.logger.error(f"Error converting PDF to images: {e}")
+            return []
+
     async def perform_ocr_async(self, file_path: str) -> Dict[str, Any]:
         try:
             self.logger.info(f"Асинхронная обработка: {file_path}")
@@ -778,39 +803,29 @@ class FileConvertToText:
         }
 
   
-    async def read_word(self, file_path: str) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists() or not path.is_file():
-            return {"status": "error", "text": "File does not exist", "metadata": {}}
-
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": "File too large (max 10 MB)", "metadata": {}}
-
-    async def extract_docx_async(self, file_path: str) -> Dict[str, Any]:
-        path = Path(file_path)
-        if not path.exists() or not path.is_file():
-            return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
-        if path.stat().st_size > self.MAX_SIZE_BYTES:
-            return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
-
-        def extract_docx():
-            try:
-                doc = docx.Document(str(path))
-                paragraphs = [p.text if p.text.strip() else "" for p in doc.paragraphs]
-                text = "\n".join(paragraphs)
-                metadata = {
-                    "paragraph_count": len(paragraphs),
-                    "word_count": len(text.split()),
-                    "source": "python-docx"
-                }
-                return {"status": "success", "text": text, "metadata": metadata}
-            except Exception as e:
-                return {"status": "error", "text": f"python-docx failed: {str(e)}", "metadata": {}}
-
-        try:
-            return await asyncio.to_thread(extract_docx)
-        except Exception as e:
-            return {"status": "error", "text": f"Error: {str(e)}", "metadata": {}}
+    def _is_text_garbage(self, text: str) -> bool:
+        """
+        Determines if the extracted text is 'garbage' or insufficient.
+        Criteria:
+        - Empty or very short.
+        - High ratio of non-alphanumeric characters.
+        """
+        if not text or len(text.strip()) < 50:
+            return True
+        
+        # Simple heuristic: if > 50% of chars are special symbols (excluding spaces), it might be garbage
+        # or if it's just a bunch of layout chars.
+        cleaned = re.sub(r'\s+', '', text)
+        if not cleaned: 
+            return True
+            
+        alnum = sum(c.isalnum() for c in cleaned)
+        ratio = alnum / len(cleaned)
+        
+        if ratio < 0.4: # Less than 40% alphanumeric
+            return True
+            
+        return False
 
     async def pdf_to_text_async(self, file_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
         path = Path(file_path)
@@ -819,15 +834,67 @@ class FileConvertToText:
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
-        def convert_pdf():
-            try:
-                doc = fitz.open(str(path))
-                text = "".join([page.get_text() for page in doc])
-                return {"status": "success", "text": text, "metadata": {"page_count": len(doc)}}
-            except Exception as e:
-                return {"status": "error", "text": str(e), "metadata": {}}
+        # Strategy 1: Native Extraction
+        try:
+            doc = fitz.open(str(path))
+            text = "".join([page.get_text() for page in doc])
+            page_count = len(doc)
+            doc.close()
+            
+            if not self._is_text_garbage(text):
+                return {
+                    "status": "success", 
+                    "text": text, 
+                    "metadata": {"page_count": page_count, "source": "native_pdf"}
+                }
+            self.logger.info(f"Native PDF text looked like garbage/empty. Switching to OCR: {file_path}")
+            
+        except Exception as e:
+            self.logger.warning(f"Native PDF extraction failed: {e}. Switching to OCR.")
 
-        return await asyncio.to_thread(convert_pdf)
+        # Strategy 2: Convert to Images & OCR (Hybrid)
+        try:
+            images = await asyncio.to_thread(self.ocr_processor.convert_pdf_to_images, str(path))
+            
+            full_text = []
+            confidence_scores = []
+            
+            for i, img in enumerate(images):
+                # We reuse the robust OCR method for each page image
+                # We can save temporarily or pass numpy array directly if supported.
+                # perform_ocr_with_fallback takes a file path. 
+                # Let's use a lower level method or save temp. 
+                # ProfessionalOCRProcessor.perform_tesseract_ocr accepts numpy array.
+                
+                # We will try to use the robust pipeline by saving temp file (overhead but safer for preprocessing logic)
+                temp_img_path = os.path.join(self.ocr_processor.LOG_DIR, f"temp_pdf_page_{i}.png")
+                cv2.imwrite(temp_img_path, img)
+                
+                ocr_result = await self.ocr_processor.perform_ocr_async(temp_img_path)
+                
+                if ocr_result.get('status') == 'success':
+                    full_text.append(ocr_result.get('text', ''))
+                    confidence_scores.append(ocr_result.get('confidence', 0))
+                
+                # Cleanup temp
+                if os.path.exists(temp_img_path):
+                    os.remove(temp_img_path)
+            
+            combined_text = "\n\n".join(full_text)
+            avg_conf = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
+            
+            return {
+                "status": "success",
+                "text": combined_text,
+                "metadata": {
+                    "page_count": len(images), 
+                    "source": "ocr_pdf", 
+                    "avg_confidence": avg_conf
+                }
+            }
+            
+        except Exception as e:
+            return {"status": "error", "text": f"PDF OCR Fallback failed: {str(e)}", "metadata": {}}
 
     async def docx_to_text_async(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
@@ -836,15 +903,72 @@ class FileConvertToText:
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
 
-        def convert_docx():
-            try:
+        # Strategy 1: Native Extraction
+        try:
+            def native_extract():
                 doc = docx.Document(str(path))
-                text = "\n".join([p.text for p in doc.paragraphs])
-                return {"status": "success", "text": text, "metadata": {"paragraphs": len(doc.paragraphs)}}
-            except Exception as e:
-                return {"status": "error", "text": str(e), "metadata": {}}
+                return "\n".join([p.text for p in doc.paragraphs])
+            
+            text = await asyncio.to_thread(native_extract)
+            
+            if not self._is_text_garbage(text):
+                return {
+                    "status": "success", 
+                    "text": text, 
+                    "metadata": {"source": "native_docx"}
+                }
+            self.logger.info(f"Native DOCX text looked like garbage/empty. Switching to OCR: {file_path}")
 
-        return await asyncio.to_thread(convert_docx)
+        except Exception as e:
+            self.logger.warning(f"Native DOCX extraction failed: {e}. Switching to OCR.")
+
+        # Strategy 2: Extract Images from Docx (Zip) & OCR
+        try:
+            def extract_images_and_ocr():
+                extracted_text = []
+                with zipfile.ZipFile(str(path)) as z:
+                    # Find all images
+                    image_files = [f for f in z.namelist() if f.startswith('word/media/') and f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                    
+                    if not image_files:
+                        return "No images found in docx."
+                    
+                    images_found = 0
+                    for img_file in image_files:
+                        with z.open(img_file) as f:
+                            img_data = f.read()
+                            # Convert to numpy for cv2
+                            nparr = np.frombuffer(img_data, np.uint8)
+                            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                            
+                            if img is not None:
+                                # Use existing OCR pipeline directly on image array if possible, 
+                                # or easiest: save temp and call async pipeline
+                                temp_img_path = os.path.join(self.ocr_processor.LOG_DIR, f"temp_docx_img_{images_found}.png")
+                                cv2.imwrite(temp_img_path, img)
+                                images_found += 1
+                                
+                                # We can't await inside this sync function easily unless we push this all to async
+                                # So we'll just use the synchronous fallback method of OCR
+                                res = self.ocr_processor.perform_ocr_with_fallback(temp_img_path)
+                                if res and res.get('text'):
+                                    extracted_text.append(res['text'])
+                                
+                                if os.path.exists(temp_img_path):
+                                    os.remove(temp_img_path)
+                                    
+                return "\n\n".join(extracted_text)
+
+            ocr_text = await asyncio.to_thread(extract_images_and_ocr)
+            
+            return {
+                "status": "success",
+                "text": ocr_text,
+                "metadata": {"source": "ocr_docx_images"}
+            }
+
+        except Exception as e:
+             return {"status": "error", "text": f"DOCX OCR Fallback failed: {str(e)}", "metadata": {}}
     async def read_csv_or_excel(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
@@ -950,7 +1074,7 @@ class FileConvertToText:
         ext = file_info.get("extension", "").lower()
         
         if ext in self.SUPPORTED_FORMATS['word']: 
-            return await self.read_word(file_path)
+            return await self.docx_to_text_async(file_path)
         elif ext in self.SUPPORTED_FORMATS['pdf']: 
             return await self.pdf_to_text_async(file_path)
         elif ext in self.SUPPORTED_FORMATS['spreadsheet']: 

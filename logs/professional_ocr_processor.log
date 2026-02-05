@@ -35,3 +35,13 @@
 2025-12-13 14:25:09,701 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - Tesseract version: 5.3.0.20221214
 2025-12-13 14:25:20,424 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/processed
 2025-12-13 14:25:20,424 - ProfessionalOCRProcessor - INFO - [file_processing.py:117] - Папка пок карда шуд: tmp/debug
+2026-02-05 08:54:23,520 - ProfessionalOCRProcessor - INFO - [file_processing.py:55] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-05 08:54:23,524 - ProfessionalOCRProcessor - WARNING - [file_processing.py:101] - Tesseract executable not found automatically. Установите переменную окружения TESSERACT_CMD ё передайте tesseract_cmd.
+2026-02-05 08:54:23,527 - ProfessionalOCRProcessor - ERROR - [file_processing.py:62] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, env-параметри TESSERACT_CMD-ро насб кунед ё паролро ба tesseract_cmd диҳед.
+2026-02-05 08:54:23,570 - ProfessionalOCRProcessor - INFO - [file_processing.py:128] - Папка пок карда шуд: tmp/processed
+2026-02-05 08:54:23,571 - ProfessionalOCRProcessor - INFO - [file_processing.py:128] - Папка пок карда шуд: tmp/debug
+2026-02-05 08:58:01,585 - ProfessionalOCRProcessor - INFO - [file_processing.py:55] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-05 08:58:01,589 - ProfessionalOCRProcessor - WARNING - [file_processing.py:101] - Tesseract executable not found automatically. Установите переменную окружения TESSERACT_CMD ё передайте tesseract_cmd.
+2026-02-05 08:58:01,590 - ProfessionalOCRProcessor - ERROR - [file_processing.py:62] - ❌ Tesseract насб нашудааст ё дар PATH нест. Лутфан, env-параметри TESSERACT_CMD-ро насб кунед ё паролро ба tesseract_cmd диҳед.
+2026-02-05 08:58:01,630 - ProfessionalOCRProcessor - INFO - [file_processing.py:128] - Папка пок карда шуд: tmp/processed
+2026-02-05 08:58:01,631 - ProfessionalOCRProcessor - INFO - [file_processing.py:128] - Папка пок карда шуд: tmp/debug
