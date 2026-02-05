@@ -79,8 +79,13 @@ COMPANIES_HOUSE_API=your-companies-house-api-key
 
 ## Installation
 1. Install Python 3.11+ and PostgreSQL.
-2. Install system dependency: Tesseract OCR
-   - Windows: Install Tesseract OCR (add to PATH). Example: C:\Program Files\Tesseract-OCR
+2. Install system dependencies:
+   - **Tesseract OCR**:
+     - Windows: Install Tesseract OCR (add to PATH). Example: `C:\Program Files\Tesseract-OCR`
+     - Linux: `sudo apt-get install tesseract-ocr`
+   - **Poppler** (required for PDF processing):
+     - Linux: `sudo apt-get install poppler-utils`
+     - Windows: Download binary and add `bin` folder to PATH.
 3. Create and activate a virtual environment.
 4. Install Python deps:
    ```bash
