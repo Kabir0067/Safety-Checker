@@ -920,7 +920,7 @@ async def process_contract_text(
             for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y.%m.%d",
                         "%B %d, %Y", "%b %d, %Y", "%B %Y", "%b %Y"]:
                 try:
-                    dt = datetime.strptime(raw_date.strip(), fmt)
+                    dt = datetime.datetime.strptime(raw_date.strip(), fmt)
                     contract_date_db = dt.date()
                     break
                 except ValueError:
