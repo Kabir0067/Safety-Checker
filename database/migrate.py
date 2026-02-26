@@ -12,7 +12,7 @@ from database.models import *
 async def init_models():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ SQLite database and tables created successfully at: database/app.db")
+    print("SQLite database and tables created successfully at: database/app.db")
 
 
 if __name__ == "__main__":

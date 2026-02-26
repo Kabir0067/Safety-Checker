@@ -7,3 +7,58 @@
 2026-02-26 22:53:04,590 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
 2026-02-26 22:53:04,593 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
 2026-02-26 22:53:04,625 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:03:24,891 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:03:24,894 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:03:24,916 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:03:26,022 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/processed
+2026-02-26 23:03:26,036 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/debug
+2026-02-26 23:03:50,619 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:03:50,625 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:03:50,643 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:03:51,369 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/processed
+2026-02-26 23:03:51,371 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/debug
+2026-02-26 23:04:28,042 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:04:28,060 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:04:28,074 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:04:29,424 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/processed
+2026-02-26 23:04:29,425 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/debug
+2026-02-26 23:04:51,266 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:04:51,271 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:04:51,298 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:05:57,089 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:05:57,103 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:05:57,123 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:09:16,260 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:09:16,266 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:09:16,289 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:09:17,641 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/processed
+2026-02-26 18:09:17,642 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/debug
+2026-02-26 23:09:35,495 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:09:35,500 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:09:35,510 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 23:09:35,827 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/processed
+2026-02-26 23:09:35,838 - ProfessionalOCRProcessor - INFO - [file_processing.py:129] - Папка пок карда шуд: tmp/debug
+2026-02-26 23:09:53,448 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 23:09:53,451 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 23:09:53,463 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:10:49,510 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:10:49,518 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:10:49,540 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:23:04,719 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:23:04,849 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:23:04,919 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:25:54,511 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:25:54,514 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:25:54,560 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:27:58,010 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:27:58,017 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:27:58,082 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:31:34,890 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:31:34,897 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:31:34,924 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:33:13,340 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:33:13,344 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:33:13,366 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
+2026-02-26 18:35:38,330 - ProfessionalOCRProcessor - INFO - [file_processing.py:56] - ProfessionalOCRProcessor инициализирован с языками: eng+rus
+2026-02-26 18:35:38,333 - ProfessionalOCRProcessor - INFO - [file_processing.py:99] - Tesseract path set to: C:/Program Files/Tesseract-OCR/tesseract.exe
+2026-02-26 18:35:38,352 - ProfessionalOCRProcessor - INFO - [file_processing.py:60] - Tesseract version: 5.3.0.20221214
