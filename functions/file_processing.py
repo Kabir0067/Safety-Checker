@@ -21,6 +21,7 @@ import fitz
 from pdf2image import convert_from_path
 import zipfile
 import io
+import uuid
 
 
 
@@ -827,74 +828,150 @@ class FileConvertToText:
             
         return False
 
+    def _normalize_for_compare(self, text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "")).strip().lower()
+
+    def _merge_native_and_ocr(self, native_text: str, ocr_text: str) -> str:
+        native = (native_text or "").strip()
+        ocr = (ocr_text or "").strip()
+
+        if native and not ocr:
+            return native
+        if ocr and not native:
+            return ocr
+        if not native and not ocr:
+            return ""
+
+        native_norm = self._normalize_for_compare(native)
+        ocr_norm = self._normalize_for_compare(ocr)
+
+        if ocr_norm and ocr_norm in native_norm:
+            return native
+        if native_norm and native_norm in ocr_norm:
+            return ocr
+
+        return f"{native}\n\n{ocr}".strip()
+
+    async def _ocr_cv_image_async(self, image: np.ndarray, prefix: str) -> Dict[str, Any]:
+        temp_name = f"{prefix}_{uuid.uuid4().hex}.png"
+        temp_img_path = os.path.join("tmp", "processed", temp_name)
+        try:
+            wrote = cv2.imwrite(temp_img_path, image)
+            if not wrote:
+                return {"status": "error", "text": "Failed to prepare image for OCR"}
+            return await self.ocr_processor.perform_ocr_async(temp_img_path)
+        finally:
+            if os.path.exists(temp_img_path):
+                try:
+                    os.remove(temp_img_path)
+                except Exception:
+                    pass
+
+    def _extract_docx_images(self, path: Path) -> List[np.ndarray]:
+        images: List[np.ndarray] = []
+        supported = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
+        with zipfile.ZipFile(str(path)) as z:
+            media_files = [
+                f for f in z.namelist()
+                if f.startswith("word/media/") and Path(f).suffix.lower() in supported
+            ]
+
+            for media_file in media_files:
+                with z.open(media_file) as fh:
+                    img_data = fh.read()
+                    nparr = np.frombuffer(img_data, np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        images.append(img)
+
+        return images
+
     async def pdf_to_text_async(self, file_path: str, output_dir: Optional[str] = None) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
+        native_pages: List[str] = []
+        ocr_candidates: set[int] = set()
+        page_count = 0
 
-        # Strategy 1: Native Extraction
         try:
-            doc = fitz.open(str(path))
-            text = "".join([page.get_text() for page in doc])
-            page_count = len(doc)
-            doc.close()
-            
-            if not self._is_text_garbage(text):
-                return {
-                    "status": "success", 
-                    "text": text, 
-                    "metadata": {"page_count": page_count, "source": "native_pdf"}
-                }
-            self.logger.info(f"Native PDF text looked like garbage/empty. Switching to OCR: {file_path}")
-            
-        except Exception as e:
-            self.logger.warning(f"Native PDF extraction failed: {e}. Switching to OCR.")
+            with fitz.open(str(path)) as doc:
+                page_count = len(doc)
+                for idx, page in enumerate(doc):
+                    page_text = (page.get_text("text") or "").strip()
+                    native_pages.append(page_text)
 
-        # Strategy 2: Convert to Images & OCR (Hybrid)
-        try:
-            images = await asyncio.to_thread(self.ocr_processor.convert_pdf_to_images, str(path))
-            
-            full_text = []
-            confidence_scores = []
-            
-            for i, img in enumerate(images):
-                # We reuse the robust OCR method for each page image
-                # We can save temporarily or pass numpy array directly if supported.
-                # perform_ocr_with_fallback takes a file path. 
-                # Let's use a lower level method or save temp. 
-                # ProfessionalOCRProcessor.perform_tesseract_ocr accepts numpy array.
-                
-                # We will try to use the robust pipeline by saving temp file (overhead but safer for preprocessing logic)
-                temp_img_path = os.path.join(self.ocr_processor.LOG_DIR, f"temp_pdf_page_{i}.png")
-                cv2.imwrite(temp_img_path, img)
-                
-                ocr_result = await self.ocr_processor.perform_ocr_async(temp_img_path)
-                
-                if ocr_result.get('status') == 'success':
-                    full_text.append(ocr_result.get('text', ''))
-                    confidence_scores.append(ocr_result.get('confidence', 0))
-                
-                # Cleanup temp
-                if os.path.exists(temp_img_path):
-                    os.remove(temp_img_path)
-            
-            combined_text = "\n\n".join(full_text)
-            avg_conf = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.0
-            
-            return {
-                "status": "success",
-                "text": combined_text,
-                "metadata": {
-                    "page_count": len(images), 
-                    "source": "ocr_pdf", 
-                    "avg_confidence": avg_conf
-                }
-            }
-            
+                    compact_len = len(re.sub(r"\s+", "", page_text))
+                    has_images = len(page.get_images(full=True)) > 0
+                    if has_images and compact_len < 120:
+                        ocr_candidates.add(idx)
+                    elif self._is_text_garbage(page_text):
+                        ocr_candidates.add(idx)
         except Exception as e:
-            return {"status": "error", "text": f"PDF OCR Fallback failed: {str(e)}", "metadata": {}}
+            self.logger.warning(f"Native PDF extraction failed for {file_path}: {e}")
+
+        native_text = "\n\n".join([p for p in native_pages if p]).strip()
+        need_ocr_for_all_pages = not native_pages or self._is_text_garbage(native_text)
+
+        ocr_text_by_page: Dict[int, str] = {}
+        ocr_confidences: List[float] = []
+
+        if need_ocr_for_all_pages or ocr_candidates:
+            try:
+                images = await asyncio.to_thread(self.ocr_processor.convert_pdf_to_images, str(path))
+                if page_count == 0:
+                    page_count = len(images)
+
+                for idx, img in enumerate(images):
+                    if not need_ocr_for_all_pages and idx not in ocr_candidates:
+                        continue
+
+                    ocr_result = await self._ocr_cv_image_async(img, f"pdf_page_{idx}")
+                    if ocr_result.get("status") != "success":
+                        continue
+
+                    ocr_text = (ocr_result.get("text") or "").strip()
+                    if not ocr_text:
+                        continue
+
+                    ocr_text_by_page[idx] = ocr_text
+                    ocr_confidences.append(float(ocr_result.get("confidence", 0.0) or 0.0))
+            except Exception as e:
+                self.logger.warning(f"PDF OCR fallback failed for {file_path}: {e}")
+
+        combined_pages: List[str] = []
+        total_pages = max(page_count, len(native_pages), (max(ocr_text_by_page.keys()) + 1) if ocr_text_by_page else 0)
+        for idx in range(total_pages):
+            native_page = native_pages[idx] if idx < len(native_pages) else ""
+            merged = self._merge_native_and_ocr(native_page, ocr_text_by_page.get(idx, ""))
+            if merged:
+                combined_pages.append(merged)
+
+        final_text = "\n\n".join(combined_pages).strip()
+        if not final_text:
+            return {"status": "error", "text": "Unable to extract readable text from PDF.", "metadata": {}}
+
+        if native_text and ocr_text_by_page:
+            source = "hybrid_pdf"
+        elif ocr_text_by_page:
+            source = "ocr_pdf"
+        else:
+            source = "native_pdf"
+
+        avg_confidence = sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else 0.0
+        return {
+            "status": "success",
+            "text": final_text,
+            "metadata": {
+                "page_count": total_pages,
+                "source": source,
+                "ocr_pages": len(ocr_text_by_page),
+                "avg_confidence": avg_confidence,
+            },
+        }
 
     async def docx_to_text_async(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
@@ -902,73 +979,59 @@ class FileConvertToText:
             return {"status": "error", "text": f"File {file_path} not found.", "metadata": {}}
         if path.stat().st_size > self.MAX_SIZE_BYTES:
             return {"status": "error", "text": f"{path.name}: file too large.", "metadata": {}}
-
-        # Strategy 1: Native Extraction
+        native_text = ""
         try:
-            def native_extract():
+            def native_extract() -> str:
                 doc = docx.Document(str(path))
-                return "\n".join([p.text for p in doc.paragraphs])
-            
-            text = await asyncio.to_thread(native_extract)
-            
-            if not self._is_text_garbage(text):
-                return {
-                    "status": "success", 
-                    "text": text, 
-                    "metadata": {"source": "native_docx"}
-                }
-            self.logger.info(f"Native DOCX text looked like garbage/empty. Switching to OCR: {file_path}")
+                return "\n".join([p.text for p in doc.paragraphs]).strip()
 
+            native_text = await asyncio.to_thread(native_extract)
         except Exception as e:
-            self.logger.warning(f"Native DOCX extraction failed: {e}. Switching to OCR.")
+            self.logger.warning(f"Native DOCX extraction failed for {file_path}: {e}")
 
-        # Strategy 2: Extract Images from Docx (Zip) & OCR
+        ocr_chunks: List[str] = []
+        ocr_confidences: List[float] = []
+        image_count = 0
         try:
-            def extract_images_and_ocr():
-                extracted_text = []
-                with zipfile.ZipFile(str(path)) as z:
-                    # Find all images
-                    image_files = [f for f in z.namelist() if f.startswith('word/media/') and f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                    
-                    if not image_files:
-                        return "No images found in docx."
-                    
-                    images_found = 0
-                    for img_file in image_files:
-                        with z.open(img_file) as f:
-                            img_data = f.read()
-                            # Convert to numpy for cv2
-                            nparr = np.frombuffer(img_data, np.uint8)
-                            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                            
-                            if img is not None:
-                                # Use existing OCR pipeline directly on image array if possible, 
-                                # or easiest: save temp and call async pipeline
-                                temp_img_path = os.path.join(self.ocr_processor.LOG_DIR, f"temp_docx_img_{images_found}.png")
-                                cv2.imwrite(temp_img_path, img)
-                                images_found += 1
-                                
-                                # We can't await inside this sync function easily unless we push this all to async
-                                # So we'll just use the synchronous fallback method of OCR
-                                res = self.ocr_processor.perform_ocr_with_fallback(temp_img_path)
-                                if res and res.get('text'):
-                                    extracted_text.append(res['text'])
-                                
-                                if os.path.exists(temp_img_path):
-                                    os.remove(temp_img_path)
-                                    
-                return "\n\n".join(extracted_text)
+            images = await asyncio.to_thread(self._extract_docx_images, path)
+            image_count = len(images)
+            for idx, img in enumerate(images):
+                ocr_result = await self._ocr_cv_image_async(img, f"docx_img_{idx}")
+                if ocr_result.get("status") != "success":
+                    continue
 
-            ocr_text = await asyncio.to_thread(extract_images_and_ocr)
-            
-            return {
-                "status": "success",
-                "text": ocr_text,
-                "metadata": {"source": "ocr_docx_images"}
-            }
+                extracted = (ocr_result.get("text") or "").strip()
+                if not extracted:
+                    continue
 
+                ocr_chunks.append(extracted)
+                ocr_confidences.append(float(ocr_result.get("confidence", 0.0) or 0.0))
         except Exception as e:
-             return {"status": "error", "text": f"DOCX OCR Fallback failed: {str(e)}", "metadata": {}}
+            self.logger.warning(f"DOCX image OCR failed for {file_path}: {e}")
+
+        ocr_text = "\n\n".join(ocr_chunks).strip()
+        final_text = self._merge_native_and_ocr(native_text, ocr_text)
+        if not final_text:
+            return {"status": "error", "text": "Unable to extract readable text from DOCX.", "metadata": {}}
+
+        if native_text and ocr_text:
+            source = "hybrid_docx"
+        elif ocr_text:
+            source = "ocr_docx_images"
+        else:
+            source = "native_docx"
+
+        avg_confidence = sum(ocr_confidences) / len(ocr_confidences) if ocr_confidences else 0.0
+        return {
+            "status": "success",
+            "text": final_text,
+            "metadata": {
+                "source": source,
+                "image_count": image_count,
+                "ocr_image_hits": len(ocr_chunks),
+                "avg_confidence": avg_confidence,
+            },
+        }
     async def read_csv_or_excel(self, file_path: str) -> Dict[str, Any]:
         path = Path(file_path)
         if not path.exists() or not path.is_file():

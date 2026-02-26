@@ -267,12 +267,146 @@ class AsyncAiProcessing:
         
         return cleaned
 
+    def _clean_text_value(self, value: Any, max_len: int = 160) -> Optional[str]:
+        if value is None:
+            return None
+
+        text = re.sub(r'\s+', ' ', str(value)).strip()
+        if not text:
+            return None
+        if len(text) > max_len:
+            return None
+        return text
+
+    def _looks_like_contract_blob(self, value: Optional[str]) -> bool:
+        if not value:
+            return False
+
+        text = str(value)
+        lowered = text.lower()
+        markers = [
+            "employment agreement",
+            "whereas",
+            "position and duties",
+            "compensation",
+            "term and termination",
+            "confidentiality",
+            "governing law",
+        ]
+        marker_hits = sum(1 for marker in markers if marker in lowered)
+        return len(text) > 140 or '\n' in text or marker_hits >= 2
+
+    def _extract_first_match(self, text: str, patterns: List[str], flags: int = re.IGNORECASE) -> Optional[str]:
+        if not text:
+            return None
+
+        for pattern in patterns:
+            match = re.search(pattern, text, flags)
+            if match:
+                return match.group(1).strip(" ,.;:()[]{}")
+        return None
+
+    def _extract_company_name_fallback(self, text: str) -> Optional[str]:
+        patterns = [
+            r'by and between:\s*([A-Za-z0-9&.,\'\-\s]{3,120}?(?:LTD|LIMITED|PLC|LLP|LP))(?:,|\s)',
+            r'\b([A-Z][A-Z0-9&.,\'\-\s]{3,120}?(?:LTD|LIMITED|PLC|LLP|LP))\b',
+            r'company\s*name\s*[:\-]\s*([A-Za-z0-9&.,\'\-\s]{3,120})',
+        ]
+        extracted = self._extract_first_match(text, patterns)
+        return self._normalize_company_name(extracted) if extracted else None
+
+    def _extract_company_number_fallback(self, text: str) -> Optional[str]:
+        patterns = [
+            r'company\s*(?:number|no\.?)\s*[:\-]?\s*([A-Za-z0-9]{5,12})',
+            r'registered\s*(?:in\s*england\s*&\s*wales\s*\|\s*)?company\s*(?:number|no\.?)\s*[:\-]?\s*([A-Za-z0-9]{5,12})',
+            r'\b(?:company|co)\s*#\s*([A-Za-z0-9]{5,12})',
+        ]
+        extracted = self._extract_first_match(text, patterns)
+        if not extracted:
+            return None
+
+        cleaned = re.sub(r'[^A-Za-z0-9]', '', extracted).upper()
+        return cleaned if re.match(r'^[A-Z0-9]{5,12}$', cleaned) else None
+
+    def _extract_contract_number_fallback(self, text: str) -> Optional[str]:
+        patterns = [
+            r'contract\s*(?:reference|number|no\.?)\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,50})',
+            r'agreement\s*(?:reference|number|no\.?)\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,50})',
+        ]
+        return self._extract_first_match(text, patterns)
+
+    def _extract_domain_fallback(self, text: str) -> Optional[str]:
+        patterns = [
+            r'(?:company\s*)?website\s*[:\-]?\s*(?:https?://)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+            r'(?:https?://)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+            r'@([A-Za-z0-9.-]+\.[A-Za-z]{2,})',
+        ]
+        extracted = self._extract_first_match(text, patterns)
+        if not extracted:
+            return None
+
+        domain = re.sub(r'^(https?://|www\.)', '', extracted, flags=re.IGNORECASE).strip().strip('/').strip('.')
+        return domain.lower() if re.match(r'^[a-z0-9.-]+\.[a-z]{2,}$', domain, flags=re.IGNORECASE) else None
+
+    def _parse_contract_date(self, raw_value: Any) -> Optional[str]:
+        if raw_value is None:
+            return None
+
+        date_str = re.sub(r'\s+', ' ', str(raw_value)).strip()
+        if not date_str:
+            return None
+
+        date_str = re.sub(r'(\d{1,2})(st|nd|rd|th)\b', r'\1', date_str, flags=re.IGNORECASE)
+
+        formats = [
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%d-%m-%Y",
+            "%d.%m.%Y",
+            "%d %B %Y",
+            "%d %b %Y",
+            "%B %d, %Y",
+            "%b %d, %Y",
+            "%d %B, %Y",
+        ]
+
+        for fmt in formats:
+            try:
+                return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+            except Exception:
+                continue
+
+        return None
+
     def _normalize_output(self, data: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(data, dict):
             return {}
 
-        if data.get("Company Name"):
-            data["Company Name"] = self._normalize_company_name(data["Company Name"])
+        contract_text = self.contract if isinstance(self.contract, str) else str(self.contract or "")
+
+        company_name = self._normalize_company_name(data.get("Company Name"))
+        company_name = self._clean_text_value(company_name, max_len=120)
+        if self._looks_like_contract_blob(company_name):
+            company_name = None
+        if not company_name:
+            company_name = self._extract_company_name_fallback(contract_text)
+        data["Company Name"] = company_name
+
+        company_number = self._clean_text_value(data.get("Company Number"), max_len=24)
+        if company_number:
+            company_number = re.sub(r'[^A-Za-z0-9]', '', company_number).upper()
+            if not re.match(r'^[A-Z0-9]{5,12}$', company_number):
+                company_number = None
+        if not company_number:
+            company_number = self._extract_company_number_fallback(contract_text)
+        data["Company Number"] = company_number
+
+        contract_number = self._clean_text_value(data.get("Contract Number"), max_len=64)
+        if self._looks_like_contract_blob(contract_number):
+            contract_number = None
+        if not contract_number:
+            contract_number = self._extract_contract_number_fallback(contract_text)
+        data["Contract Number"] = contract_number
 
         if data.get("Contact Details"):
             text = str(data["Contact Details"])
@@ -317,19 +451,23 @@ class AsyncAiProcessing:
         else:
             data["Website Domain"] = None
 
-        if data.get("Contract Date"):
-            date_str = str(data["Contract Date"]).strip()
-            formats = ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %B %Y", "%B %d, %Y"]
-            parsed = None
-            for fmt in formats:
-                try:
-                    parsed = datetime.strptime(date_str, fmt)
-                    break
-                except:
-                    continue
-            data["Contract Date"] = parsed.strftime("%Y-%m-%d") if parsed else None
+        if not data.get("Website Domain") or self._looks_like_contract_blob(data.get("Website Domain")):
+            data["Website Domain"] = self._extract_domain_fallback(contract_text)
         else:
-            data["Contract Date"] = None
+            normalized_domain = re.sub(r'^(https?://|www\.)', '', str(data["Website Domain"]).strip(), flags=re.IGNORECASE)
+            normalized_domain = normalized_domain.split('/')[0].strip().strip('.')
+            data["Website Domain"] = normalized_domain.lower() if normalized_domain else None
+
+        data["Contract Date"] = self._parse_contract_date(data.get("Contract Date"))
+        if not data["Contract Date"]:
+            date_fallback = self._extract_first_match(
+                contract_text,
+                [
+                    r'(?:effective\s*date|date)\s*[:\-]?\s*((?:\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})|(?:[A-Za-z]+\s+\d{1,2},\s+\d{4})|(?:\d{4}-\d{2}-\d{2}))',
+                    r'as\s+of\s+((?:\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}))',
+                ],
+            )
+            data["Contract Date"] = self._parse_contract_date(date_fallback)
 
         if not isinstance(data.get("Suspicious Phrases Found"), list):
             data["Suspicious Phrases Found"] = None
@@ -527,7 +665,13 @@ class AsyncAiProcessing:
     def _is_valid_result(self, result: Dict[str, Any]) -> bool:
         if not result:
             return False
-        required_fields = ["Company Name", "Contract Date"]
+        required_fields = [
+            "Company Name",
+            "Company Number",
+            "Contract Number",
+            "Website Domain",
+            "Contract Date",
+        ]
         return any(result.get(field) for field in required_fields)
 
     async def get_answer_json_dict(self) -> Optional[Dict[str, Any]]:

@@ -2,7 +2,7 @@ from database.models import User, Company, UserCheck, SuspiciousCompany
 from database.connection import AsyncSessionLocal
 from typing import Optional, List, Dict, Any
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import select, func, case, delete
+from sqlalchemy import select, func, case, delete, and_
 from datetime import datetime
 import zipfile
 import csv
@@ -11,6 +11,21 @@ import os
 
 
 ADMIN_STATE_ADD: Dict[int, str] = {}
+
+
+def _clean_optional_string(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None
+
+
+def _is_meaningful(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
 
 
 
@@ -57,23 +72,62 @@ async def change_language(telegram_id: str, new_language: str) -> bool:
 
 
 async def add_company(data: Dict[str, Any]) -> Optional[int]:
-    data = {
+    cleaned_data = {
         **data,
-        'last_updated': datetime.utcnow()
+        "name": _clean_optional_string(data.get("name")),
+        "company_number": _clean_optional_string(data.get("company_number")),
+        "registered_address": _clean_optional_string(data.get("registered_address")),
+        "website_domain": _clean_optional_string(data.get("website_domain")),
+        "contact_email": _clean_optional_string(data.get("contact_email")),
+        "phone_number": _clean_optional_string(data.get("phone_number")),
+        "last_updated": datetime.utcnow(),
     }
 
     async with AsyncSessionLocal() as session:
         try:
-            existing = await session.scalar(
-                select(Company).where(Company.company_number == data["company_number"])
-            )
+            existing = None
+            company_number = cleaned_data.get("company_number")
+
+            if company_number:
+                existing = await session.scalar(
+                    select(Company).where(Company.company_number == company_number)
+                )
+            else:
+                name = cleaned_data.get("name")
+                registered_address = cleaned_data.get("registered_address")
+                website_domain = cleaned_data.get("website_domain")
+
+                if name and registered_address:
+                    existing = await session.scalar(
+                        select(Company).where(
+                            and_(
+                                func.lower(Company.name) == name.lower(),
+                                func.lower(Company.registered_address) == registered_address.lower(),
+                                Company.company_number.is_(None),
+                            )
+                        )
+                    )
+                elif name and website_domain:
+                    existing = await session.scalar(
+                        select(Company).where(
+                            and_(
+                                func.lower(Company.name) == name.lower(),
+                                func.lower(Company.website_domain) == website_domain.lower(),
+                                Company.company_number.is_(None),
+                            )
+                        )
+                    )
 
             if existing:
-                for key, value in data.items():
-                    if hasattr(existing, key):
+                for key, value in cleaned_data.items():
+                    if not hasattr(existing, key):
+                        continue
+                    if key == "last_updated" or _is_meaningful(value):
                         setattr(existing, key, value)
             else:
-                filtered_data = {k: v for k, v in data.items() if hasattr(Company, k)}
+                if not cleaned_data.get("name"):
+                    return None
+                filtered_data = {k: v for k, v in cleaned_data.items() if hasattr(Company, k)}
                 company = Company(**filtered_data)
                 session.add(company)
                 existing = company
@@ -166,14 +220,64 @@ async def get_user_checks_history(user_id: int, limit: int = 10) -> List[Dict]:
 async def add_suspicious_company(data: Dict[str, Any]) -> Optional[int]:
     async with AsyncSessionLocal() as session:
         try:
-            existing = await session.scalar(
-                select(SuspiciousCompany).where(SuspiciousCompany.company_number == data.get("company_number"))
-            )
+            company_number = _clean_optional_string(data.get("company_number"))
+            company_name = _clean_optional_string(data.get("company_name"))
+            website_domain = _clean_optional_string(data.get("website_domain"))
+            registered_address = _clean_optional_string(data.get("registered_address"))
+
+            normalized_data = {
+                **data,
+                "company_number": company_number,
+                "company_name": company_name or (company_number and f"Company {company_number}"),
+                "website_domain": website_domain,
+                "registered_address": registered_address,
+                "contact_phone": _clean_optional_string(data.get("contact_phone")),
+                "contact_email": _clean_optional_string(data.get("contact_email")),
+            }
+
+            existing = None
+            if company_number:
+                existing = await session.scalar(
+                    select(SuspiciousCompany).where(SuspiciousCompany.company_number == company_number)
+                )
+            elif company_name and registered_address:
+                existing = await session.scalar(
+                    select(SuspiciousCompany).where(
+                        and_(
+                            func.lower(SuspiciousCompany.company_name) == company_name.lower(),
+                            func.lower(SuspiciousCompany.registered_address) == registered_address.lower(),
+                            SuspiciousCompany.company_number.is_(None),
+                        )
+                    )
+                )
+            elif company_name and website_domain:
+                existing = await session.scalar(
+                    select(SuspiciousCompany).where(
+                        and_(
+                            func.lower(SuspiciousCompany.company_name) == company_name.lower(),
+                            func.lower(SuspiciousCompany.website_domain) == website_domain.lower(),
+                            SuspiciousCompany.company_number.is_(None),
+                        )
+                    )
+                )
+            elif company_name:
+                existing = await session.scalar(
+                    select(SuspiciousCompany).where(
+                        and_(
+                            func.lower(SuspiciousCompany.company_name) == company_name.lower(),
+                            SuspiciousCompany.company_number.is_(None),
+                        )
+                    )
+                )
+
             if existing:
-                for k, v in data.items():
-                    setattr(existing, k, v)
+                for key, value in normalized_data.items():
+                    if hasattr(existing, key) and _is_meaningful(value):
+                        setattr(existing, key, value)
             else:
-                existing = SuspiciousCompany(**data)
+                if not normalized_data.get("company_name"):
+                    return None
+                existing = SuspiciousCompany(**normalized_data)
                 session.add(existing)
             await session.commit()
             await session.refresh(existing)

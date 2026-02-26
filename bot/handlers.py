@@ -5,7 +5,7 @@ from telebot.async_telebot import AsyncTeleBot
 from aiohttp import ClientTimeout, BasicAuth
 from email.message import EmailMessage
 from database.queries import *
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any, Tuple
 from telebot import types
 from pathlib import Path
 from bot.bot import *
@@ -13,6 +13,7 @@ import aiosmtplib
 import datetime
 import aiofiles
 import aiohttp
+import html
 import json
 import os
 import re
@@ -548,6 +549,105 @@ def is_check_active(user_id: str) -> bool:
         return False
     return True
 
+
+def _extract_text_payload(payload: Any) -> Tuple[Optional[str], Optional[str]]:
+    if isinstance(payload, dict):
+        if payload.get("status") == "error":
+            err = payload.get("text") or payload.get("error") or "Conversion failed"
+            return None, str(err)
+        text_value = payload.get("text")
+    else:
+        text_value = payload
+
+    normalized = str(text_value or "").replace('\r\n', '\n').replace('\r', '\n').strip()
+    if not normalized:
+        return None, "No readable text extracted"
+    return normalized, None
+
+
+def _normalize_input_format(file_type: Optional[str]) -> str:
+    value = str(file_type or "text").strip().lower()
+    if value.startswith('.'):
+        value = value[1:]
+    return value or "text"
+
+
+def _normalize_status_category(status_raw: Any) -> str:
+    value = str(status_raw or "").strip().lower()
+    if any(k in value for k in ["unsafe", "risk", "риск", "подоз", "хатар"]):
+        return "unsafe"
+    if any(k in value for k in ["warn", "attention", "треб", "эҳтиёт", "огоҳ"]):
+        return "warning"
+    if any(k in value for k in ["safe", "безопас", "бехатар", "бовар"]):
+        return "safe"
+    return "unknown"
+
+
+def _summary_value(value: Any, max_len: int = 110) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return "—"
+
+    markers = ["employment agreement", "whereas", "position and duties", "term and termination"]
+    lowered = text.lower()
+    if len(text) > max_len or sum(1 for marker in markers if marker in lowered) >= 2:
+        return "—"
+    return html.escape(text)
+
+
+def _build_pretty_summary(
+    lang: str,
+    file_type: str,
+    total_score: int,
+    status_raw: str,
+    ai_result: Dict[str, Any],
+) -> str:
+    labels = {
+        'ru': {
+            'format': "📄 <b>Формат:</b>",
+            'score': "⭐️ <b>Общий балл:</b>",
+            'status': "🛡️ <b>Статус:</b>",
+            'company': "🏢 <b>Компания:</b>",
+            'company_number': "📇 <b>Номер компании:</b>",
+            'domain': "🌐 <b>Домен:</b>",
+        },
+        'tj': {
+            'format': "📄 <b>Формат:</b>",
+            'score': "⭐️ <b>Холи умумӣ:</b>",
+            'status': "🛡️ <b>Ҳолат:</b>",
+            'company': "🏢 <b>Ширкат:</b>",
+            'company_number': "📇 <b>Рақами ширкат:</b>",
+            'domain': "🌐 <b>Домен:</b>",
+        },
+        'en': {
+            'format': "📄 <b>Format:</b>",
+            'score': "⭐️ <b>Total score:</b>",
+            'status': "🛡️ <b>Status:</b>",
+            'company': "🏢 <b>Company:</b>",
+            'company_number': "📇 <b>Company number:</b>",
+            'domain': "🌐 <b>Domain:</b>",
+        },
+    }
+
+    status_icons = {'safe': "🟢", 'warning': "🟠", 'unsafe': "🔴", 'unknown': "⚪"}
+    status_text = {'safe': "Safe", 'warning': "Warning", 'unsafe': "Unsafe", 'unknown': "Unknown"}
+
+    L = labels.get(lang, labels['en'])
+    category = _normalize_status_category(status_raw)
+    icon = status_icons.get(category, status_icons['unknown'])
+    status_label = status_text.get(category, status_text['unknown'])
+
+    lines = [
+        f"{L['format']} <code>{html.escape(_normalize_input_format(file_type))}</code>",
+        f"{L['score']} <b>{max(0, min(100, int(total_score or 0)))}</b>",
+        f"{L['status']} {icon} <b>{status_label}</b>",
+        "",
+        f"{L['company']} <code>{_summary_value(ai_result.get('Company Name'))}</code>",
+        f"{L['company_number']} <code>{_summary_value(ai_result.get('Company Number'), max_len=30)}</code>",
+        f"{L['domain']} <code>{_summary_value(ai_result.get('Website Domain'), max_len=80)}</code>",
+    ]
+    return "\n".join(lines)
+
 async def process_file(file: types.Document):
     file_path = os.path.join(FILES_DIR, file.file_name)
     try:
@@ -573,7 +673,11 @@ async def process_file(file: types.Document):
     elif isinstance(text, str) and text.startswith("Ошибка"):
         return None, file_path, {"error": "Conversion failed"}
     
-    return text, file_path, ext
+    contract_text, extraction_error = _extract_text_payload(text)
+    if extraction_error:
+        return None, file_path, {"error": extraction_error}
+
+    return contract_text, file_path, ext
 
 @bot.message_handler(commands=['check'])
 async def handle_check(message: types.Message):
@@ -663,45 +767,68 @@ async def handle_photo(message: types.Message):
         'en': "⏳ Processing image (OCR)..."
     }
     await bot.send_message(message.chat.id, wait_texts.get(user_lang, wait_texts['en']), reply_markup=ReplyKeyboardRemove())
-
-    file_id = message.photo[-1].file_id
-    file = await bot.get_file(file_id)
-    
-    if file.file_size > MAX_SIZE_BYTES:
-        await bot.send_message(message.chat.id, 
-            f"❌ Акс хеле калон аст — ҳадди аксар {MAX_SIZE_BYTES // (1024*1024)} MB.",
-            parse_mode='Markdown')
-        cancel_check(user_id)
-        return
-
-    file_data = await bot.download_file(file.file_path)
-
-    png_path = os.path.join(FILES_DIR, f"{user_id}_temp_image.png")
+    png_path: Optional[str] = None
     try:
-        img = Image.open(io.BytesIO(file_data))
-        img = img.convert("RGB")  
-        img.save(png_path, "PNG")
+        file_id = message.photo[-1].file_id
+        file = await bot.get_file(file_id)
+        
+        if file.file_size > MAX_SIZE_BYTES:
+            await bot.send_message(message.chat.id, 
+                f"❌ Акс хеле калон аст — ҳадди аксар {MAX_SIZE_BYTES // (1024*1024)} MB.",
+                parse_mode='Markdown')
+            cancel_check(user_id)
+            return
+
+        file_data = await bot.download_file(file.file_path)
+
+        png_path = os.path.join(FILES_DIR, f"{user_id}_temp_image.png")
+        try:
+            img = Image.open(io.BytesIO(file_data))
+            img = img.convert("RGB")  
+            img.save(png_path, "PNG")
+        except Exception as e:
+            await bot.send_message(message.chat.id, f"❌ Хатогӣ дар табдилдиҳӣ: {str(e)}")
+            cancel_check(user_id)
+            return
+
+        text = await converter.convert_to_text(png_path)
+        if isinstance(text, dict) and text.get("status") == "error":
+            error_msg = text.get("text", "OCR failed")
+            await bot.send_message(message.chat.id, f"❌ {error_msg}")
+            if os.path.exists(png_path):
+                os.remove(png_path)
+            cancel_check(user_id)
+            return
+        elif isinstance(text, str) and text.startswith("Ошибка"):
+            await bot.send_message(message.chat.id, "❌ OCR нашуд. Матн аз акс хонда нашуд.")
+            if os.path.exists(png_path):
+                os.remove(png_path)
+            cancel_check(user_id)
+            return
+
+        contract_text, extraction_error = _extract_text_payload(text)
+        if extraction_error:
+            await bot.send_message(message.chat.id, "❌ OCR returned empty text. Please try a clearer image.")
+            if os.path.exists(png_path):
+                os.remove(png_path)
+            cancel_check(user_id)
+            return
+
+        await process_contract_text(message, contract_text, file_path=png_path, file_type="png")
     except Exception as e:
-        await bot.send_message(message.chat.id, f"❌ Хатогӣ дар табдилдиҳӣ: {str(e)}")
+        print(f"handle_photo fatal error: {e}")
+        fallback_texts = {
+            'ru': "\u274c \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.",
+            'tj': "\u274c Xatoi korkardi aks. Lutfan boz kushish kuned.",
+            'en': "\u274c Image processing error. Please try again.",
+        }
+        await bot.send_message(message.chat.id, fallback_texts.get(user_lang, fallback_texts['en']))
+        if png_path and os.path.exists(png_path):
+            try:
+                os.remove(png_path)
+            except Exception:
+                pass
         cancel_check(user_id)
-        return
-
-    text = await converter.convert_to_text(png_path)
-    if isinstance(text, dict) and text.get("status") == "error":
-        error_msg = text.get("text", "OCR failed")
-        await bot.send_message(message.chat.id, f"❌ {error_msg}")
-        if os.path.exists(png_path):
-            os.remove(png_path)
-        cancel_check(user_id)
-        return
-    elif isinstance(text, str) and text.startswith("Ошибка"):
-        await bot.send_message(message.chat.id, "❌ OCR нашуд. Матн аз акс хонда нашуд.")
-        if os.path.exists(png_path):
-            os.remove(png_path)
-        cancel_check(user_id)
-        return
-
-    await process_contract_text(message, text, file_path=png_path, file_type="png")
 
 @bot.message_handler(content_types=['document'])
 async def handle_document(message: types.Message):
@@ -730,7 +857,11 @@ async def handle_document(message: types.Message):
         return
 
     if user_state[user_id].get('processing'):
-        busy_text = { ... } 
+        busy_text = {
+            'ru': "⏳ Предыдущая задача ещё обрабатывается. Пожалуйста, подождите.",
+            'tj': "⏳ Дархости қаблӣ ҳоло ҳам коркард мешавад. Лутфан интизор шавед.",
+            'en': "⏳ A previous task is still being processed. Please wait.",
+        }
         await bot.send_message(message.chat.id, busy_text.get(user_lang, busy_text['en']))
         return
 
@@ -741,49 +872,74 @@ async def handle_document(message: types.Message):
         'en': "⏳ File is being processed..."
     }
     await bot.send_message(message.chat.id, wait_texts.get(user_lang, wait_texts['en']), reply_markup=ReplyKeyboardRemove())
+    temp_path: Optional[str] = None
+    final_path: Optional[str] = None
+    try:
+        file_info = await bot.get_file(message.document.file_id)
+        file_data = await bot.download_file(file_info.file_path)
+        temp_path = os.path.join(FILES_DIR, f"{user_id}_doc_temp{Path(file_name).suffix}")
+        async with aiofiles.open(temp_path, 'wb') as f:
+            await f.write(file_data)
 
-    file_info = await bot.get_file(message.document.file_id)
-    file_data = await bot.download_file(file_info.file_path)
-    temp_path = os.path.join(FILES_DIR, f"{user_id}_doc_temp{Path(file_name).suffix}")
-    async with aiofiles.open(temp_path, 'wb') as f:
-        await f.write(file_data)
+        final_path = temp_path
+        final_ext = "png" if is_image else Path(file_name).suffix.lower()
 
-    final_path = temp_path
-    final_ext = "png" if is_image else Path(file_name).suffix.lower()
+        if is_image:
+            try:
+                img = Image.open(temp_path)
+                final_path = os.path.join(FILES_DIR, f"{user_id}_converted.png")
+                img.convert("RGB").save(final_path, "PNG")
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except Exception as e:
+                await bot.send_message(message.chat.id, f"❌ Хатогӣ дар табдил: {e}")
+                cancel_check(user_id)
+                return
 
-    if is_image:
-        try:
-            img = Image.open(temp_path)
-            final_path = os.path.join(FILES_DIR, f"{user_id}_converted.png")
-            img.convert("RGB").save(final_path, "PNG")
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except Exception as e:
-            await bot.send_message(message.chat.id, f"❌ Хатогӣ дар табдил: {e}")
+        if final_ext not in FORMATS and not is_image:
+            await bot.send_message(message.chat.id, "❌ Формат дастгирӣ намешавад.")
             cancel_check(user_id)
             return
 
-    if final_ext not in FORMATS and not is_image:
-        await bot.send_message(message.chat.id, "❌ Формат дастгирӣ намешавад.")
-        cancel_check(user_id)
-        return
+        text = await converter.convert_to_text(final_path)
+        if isinstance(text, dict) and text.get("status") == "error":
+            error_msg = text.get("text", "Conversion failed")
+            await bot.send_message(message.chat.id, f"❌ {error_msg}")
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            cancel_check(user_id)
+            return
+        elif isinstance(text, str) and text.startswith("Ошибка"):
+            await bot.send_message(message.chat.id, "❌ Матн хонда нашуд.")
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            cancel_check(user_id)
+            return
 
-    text = await converter.convert_to_text(final_path)
-    if isinstance(text, dict) and text.get("status") == "error":
-        error_msg = text.get("text", "Conversion failed")
-        await bot.send_message(message.chat.id, f"❌ {error_msg}")
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        cancel_check(user_id)
-        return
-    elif isinstance(text, str) and text.startswith("Ошибка"):
-        await bot.send_message(message.chat.id, "❌ Матн хонда нашуд.")
-        if os.path.exists(final_path):
-            os.remove(final_path)
-        cancel_check(user_id)
-        return
+        contract_text, extraction_error = _extract_text_payload(text)
+        if extraction_error:
+            await bot.send_message(message.chat.id, "❌ Unable to extract readable text from file.")
+            if os.path.exists(final_path):
+                os.remove(final_path)
+            cancel_check(user_id)
+            return
 
-    await process_contract_text(message, text, file_path=final_path, file_type=final_ext)
+        await process_contract_text(message, contract_text, file_path=final_path, file_type=final_ext)
+    except Exception as e:
+        print(f"handle_document fatal error: {e}")
+        fallback_texts = {
+            'ru': "\u274c \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438 \u0444\u0430\u0439\u043b\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.",
+            'tj': "\u274c Xatoi korkardi fayl. Lutfan boz kushish kuned.",
+            'en': "\u274c File processing error. Please try again.",
+        }
+        await bot.send_message(message.chat.id, fallback_texts.get(user_lang, fallback_texts['en']))
+        for path in [temp_path, final_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+        cancel_check(user_id)
 
 @bot.message_handler(func=lambda m: isinstance(m.text, str) and m.text.strip() != '' and not m.text.startswith('/')
                   and is_check_active(str(m.chat.id)),content_types=['text'])
@@ -850,170 +1006,172 @@ async def process_contract_text(
     user_id = str(message.chat.id)
     user_lang = await get_lang(user_id) or 'ru'
 
-    ai = AsyncAiProcessing(text)
     try:
-        # Установить таймаут для AI обработки (BR-6 fix)
-        ai_result = await asyncio.wait_for(ai.get_answer_json_dict(), timeout=60.0)
-    except asyncio.TimeoutError:
-        error_texts = {
-            'ru': "❌ Время обработки истекло. Попробуйте позже.",
-            'tj': "❌ Вақти коркард ба охир расид. Баъдтар такрор кунед.",
-            'en': "❌ Processing timeout. Please try again later."
-        }
-        await bot.send_message(message.chat.id, error_texts.get(user_lang, error_texts['en']))
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        cancel_check(user_id)
-        return
-    if not ai_result:
-        error_texts = {
-            'ru': "❌ Не удалось извлечь данные из текста. Попробуйте другой формат или уточните текст.",
-            'tj': "❌ Маълумот аз матн гирифта нашуд. Формати дигар ё матни дақиқтарро кӯшиш кунед.",
-            'en': "❌ Failed to extract data from text. Try another format or refine the text."
-        }
-        await bot.send_message(message.chat.id, error_texts.get(user_lang, error_texts['en']))
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        cancel_check(user_id)
-        return
-
-    async with AsyncCheckAnalysisContract(ai_result) as analysis:
-        detailed_report = await analysis.get_detailed_report()
-
-    total_score = detailed_report.get("total_score", 0)
-    status = detailed_report.get("status", "unknown")
-
-    try:
-        user_row = await get_user_by_telegram_id(user_id)
-        user_db_id = user_row.get('id') if user_row else None
-    except Exception:
-        user_db_id = None
-
-    company_id = None
-    try:
-        company_name = ai_result.get('Company Name')
-        if company_name:
-            payload = {
-                'name': company_name,
-                'company_number': ai_result.get('Company Number'),
-                'registered_address': ai_result.get('Registered Address'),
-                'status': 'unknown',
-                'score': total_score,
-                'website_domain': ai_result.get('Website Domain'),
-                'contact_email': None,
-                'phone_number': None,
+        contract_text, extraction_error = _extract_text_payload(text)
+        if extraction_error:
+            no_text = {
+                'ru': "\u274c \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c \u0447\u0438\u0442\u0430\u0435\u043c\u044b\u0439 \u0442\u0435\u043a\u0441\u0442.",
+                'tj': "\u274c Matni khondashavanda yoft nashud.",
+                'en': "\u274c Unable to extract readable text.",
             }
-            company_id = await add_company(payload)
-    except Exception as e:
-        print(f"❌ Error adding company: {e}")
+            await bot.send_message(message.chat.id, no_text.get(user_lang, no_text['en']))
+            return
 
-    contract_date_db = None
-    try:
-        raw_date = ai_result.get('Contract Date')
-        if isinstance(raw_date, str) and raw_date.strip():
-            for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y.%m.%d",
-                        "%B %d, %Y", "%b %d, %Y", "%B %Y", "%b %Y"]:
-                try:
-                    dt = datetime.datetime.strptime(raw_date.strip(), fmt)
-                    contract_date_db = dt.date()
-                    break
-                except ValueError:
-                    continue
-    except Exception as e:
-        print(f"❌ Error parsing date: {e}")
+        if len(contract_text) < 50:
+            short_texts = {
+                'ru': "\u26a0\ufe0f \u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u0442\u0435\u043a\u0441\u0442\u0430 \u0434\u043b\u044f \u0430\u043d\u0430\u043b\u0438\u0437\u0430. \u041e\u0442\u043f\u0440\u0430\u0432\u044c\u0442\u0435 \u043f\u043e\u043b\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u0430.",
+                'tj': "\u26a0\ufe0f Baroi tahlil matn kofi nest. Matni purrai shartnomaro firisted.",
+                'en': "\u26a0\ufe0f Not enough text for analysis. Please send the full contract text.",
+            }
+            await bot.send_message(message.chat.id, short_texts.get(user_lang, short_texts['en']))
+            return
 
-    try:
-        await add_user_check({
-            'user_id': user_db_id,
-            'company_id': company_id,
-            'contract_number': ai_result.get('Contract Number'),
-            'contract_date': contract_date_db,
-            'extracted_company_name': ai_result.get('Company Name'),
-            'extracted_company_number': ai_result.get('Company Number'),
-            'extracted_address': ai_result.get('Registered Address'),
-            'website_domain': ai_result.get('Website Domain'),
-            'total_score': total_score,
-            'safety_rating': status,
-            'detailed_scores': detailed_report.get('detailed_scores', {})
-        })
-    except Exception as e:
-        print(f"❌ Error adding user check: {e}")
-
-    try:
-        suspicious = (total_score < 50 or
-                     (isinstance(ai_result.get('Suspicious Phrases Found'), list) and
-                      ai_result.get('Suspicious Phrases Found')))
-        if suspicious:
-            name = ai_result.get('Company Name')
-            number = ai_result.get('Company Number')
-            if name or number:
-                await add_suspicious_company({
-                    'company_name': name or (number and f"Company {number}"),
-                    'company_number': number,
-                    'evidence': json.dumps({'ai': ai_result, 'report': detailed_report}),
-                    'source': 'bot_auto',
-                    'status': 'active',
-                    'website_domain': ai_result.get('Website Domain'),
-                    'registered_address': ai_result.get('Registered Address'),
-                    'contact_phone': None,
-                    'contact_email': None,
-                    'added_by': user_db_id
-                })
-    except Exception as e:
-        print(f"❌ Error adding suspicious company: {e}")
-
-    input_label = {
-        'ru': f"📄 Формат: {file_type}" if file_type else "📄 Ввод: Текст",
-        'tj': f"📄 Формат: {file_type}" if file_type else "📄 Ворид: Матн",
-        'en': f"📄 Format: {file_type}" if file_type else "📄 Input: Text"
-    }
-
-    summary = {
-        'ru': (
-            f"{input_label['ru']}\n"
-            f"⭐ *Общий балл:* {total_score}\n"
-            f"🛡️ *Статус:* {status}\n\n"
-            f"🏢 *Компания:* {ai_result.get('Company Name') or '-'}\n"
-            f"📇 *Номер компании:* {ai_result.get('Company Number') or '-'}\n"
-            f"🌐 *Домен:* {ai_result.get('Website Domain') or '-'}\n"
-        ),
-        'tj': (
-            f"{input_label['tj']}\n"
-            f"⭐ *Балл:* {total_score}\n"
-            f"🛡️ *Ҳолат:* {status}\n\n"
-            f"🏢 *Ширкат:* {ai_result.get('Company Name') or '-'}\n"
-            f"📇 *Рақами ширкат:* {ai_result.get('Company Number') or '-'}\n"
-            f"🌐 *Домен:* {ai_result.get('Website Domain') or '-'}\n"
-        ),
-        'en': (
-            f"{input_label['en']}\n"
-            f"⭐ *Total Score:* {total_score}\n"
-            f"🛡️ *Status:* {status}\n\n"
-            f"🏢 *Company:* {ai_result.get('Company Name') or '-'}\n"
-            f"📇 *Company Number:* {ai_result.get('Company Number') or '-'}\n"
-            f"🌐 *Domain:* {ai_result.get('Website Domain') or '-'}\n"
-        )
-    }
-
-    await bot.send_message(
-        message.chat.id,
-        summary.get(user_lang, summary['en']),
-        parse_mode='Markdown'
-    )
-
-    if file_path and os.path.exists(file_path):
+        ai = AsyncAiProcessing(contract_text)
         try:
-            os.remove(file_path)
-        except Exception:
-            pass
+            ai_result = await asyncio.wait_for(ai.get_answer_json_dict(), timeout=70.0)
+        except asyncio.TimeoutError:
+            timeout_texts = {
+                'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 AI-\u0430\u043d\u0430\u043b\u0438\u0437\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0437\u0436\u0435.",
+                'tj': "\u274c Vaqti tahlili AI ba okhir rasid. Badtar kushish kuned.",
+                'en': "\u274c AI analysis timed out. Please try again later.",
+            }
+            await bot.send_message(message.chat.id, timeout_texts.get(user_lang, timeout_texts['en']))
+            return
 
-    cancel_check(user_id)
+        if not ai_result or not isinstance(ai_result, dict):
+            failed_texts = {
+                'ru': "\u274c \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0442\u0435\u043a\u0441\u0442\u0430.",
+                'tj': "\u274c Malumoti lozima az matn girifta nashud.",
+                'en': "\u274c Failed to extract data from text.",
+            }
+            await bot.send_message(message.chat.id, failed_texts.get(user_lang, failed_texts['en']))
+            return
+
+        try:
+            async with AsyncCheckAnalysisContract(ai_result, raw_contract_text=contract_text) as analysis:
+                detailed_report = await asyncio.wait_for(analysis.get_detailed_report(), timeout=45.0)
+        except asyncio.TimeoutError:
+            verify_timeout = {
+                'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 \u044d\u0442\u0430\u043f\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438.",
+                'tj': "\u274c Vaqti marhilai sanjishi shirkat ba okhir rasid.",
+                'en': "\u274c Company verification step timed out.",
+            }
+            await bot.send_message(message.chat.id, verify_timeout.get(user_lang, verify_timeout['en']))
+            return
+
+        total_score = detailed_report.get("total_score", 0)
+        status = detailed_report.get("status", "unknown")
+
+        try:
+            user_row = await get_user_by_telegram_id(user_id)
+            user_db_id = user_row.get('id') if user_row else None
+        except Exception:
+            user_db_id = None
+
+        company_id = None
+        try:
+            company_name = ai_result.get('Company Name')
+            if company_name:
+                payload = {
+                    'name': company_name,
+                    'company_number': ai_result.get('Company Number'),
+                    'registered_address': ai_result.get('Registered Address'),
+                    'status': 'unknown',
+                    'score': total_score,
+                    'website_domain': ai_result.get('Website Domain'),
+                    'contact_email': None,
+                    'phone_number': None,
+                }
+                company_id = await add_company(payload)
+        except Exception as e:
+            print(f"add_company error: {e}")
+
+        contract_date_db = None
+        try:
+            raw_date = ai_result.get('Contract Date')
+            if isinstance(raw_date, str) and raw_date.strip():
+                normalized_raw_date = re.sub(r'(\d{1,2})(st|nd|rd|th)\b', r'\1', raw_date.strip(), flags=re.IGNORECASE)
+                for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%Y.%m.%d",
+                            "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%B %Y", "%b %Y"]:
+                    try:
+                        dt = datetime.datetime.strptime(normalized_raw_date, fmt)
+                        contract_date_db = dt.date()
+                        break
+                    except ValueError:
+                        continue
+        except Exception as e:
+            print(f"date parse error: {e}")
+
+        try:
+            await add_user_check({
+                'user_id': user_db_id,
+                'company_id': company_id,
+                'contract_number': ai_result.get('Contract Number'),
+                'contract_date': contract_date_db,
+                'extracted_company_name': ai_result.get('Company Name'),
+                'extracted_company_number': ai_result.get('Company Number'),
+                'extracted_address': ai_result.get('Registered Address'),
+                'website_domain': ai_result.get('Website Domain'),
+                'total_score': total_score,
+                'safety_rating': status,
+                'detailed_scores': detailed_report.get('detailed_scores', {})
+            })
+        except Exception as e:
+            print(f"add_user_check error: {e}")
+
+        try:
+            suspicious = (
+                total_score < 50
+                or (isinstance(ai_result.get('Suspicious Phrases Found'), list) and ai_result.get('Suspicious Phrases Found'))
+            )
+            if suspicious:
+                name = ai_result.get('Company Name')
+                number = ai_result.get('Company Number')
+                if name or number:
+                    await add_suspicious_company({
+                        'company_name': name or (number and f"Company {number}"),
+                        'company_number': number,
+                        'evidence': json.dumps({'ai': ai_result, 'report': detailed_report}),
+                        'source': 'bot_auto',
+                        'status': 'active',
+                        'website_domain': ai_result.get('Website Domain'),
+                        'registered_address': ai_result.get('Registered Address'),
+                        'contact_phone': None,
+                        'contact_email': None,
+                        'added_by': user_db_id
+                    })
+        except Exception as e:
+            print(f"add_suspicious_company error: {e}")
+
+        pretty_summary = _build_pretty_summary(
+            lang=user_lang,
+            file_type=file_type,
+            total_score=total_score,
+            status_raw=status,
+            ai_result=ai_result,
+        )
+
+        await bot.send_message(
+            message.chat.id,
+            pretty_summary,
+            parse_mode='HTML',
+            disable_web_page_preview=True,
+        )
+    except Exception as e:
+        print(f"process_contract_text fatal error: {e}")
+        fail_texts = {
+            'ru': "\u274c \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430 \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438.",
+            'tj': "\u274c Xatoi sistema hangomi sanjish.",
+            'en': "\u274c System error during verification.",
+        }
+        await bot.send_message(message.chat.id, fail_texts.get(user_lang, fail_texts['en']))
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        cancel_check(user_id)
 # ----------------------------------------------------------------------------
 
 
@@ -1436,3 +1594,4 @@ async def handle_main_menu_callback(call):
 
     await bot.answer_callback_query(call.id)
 # ----------------------------------------------------------------------------
+
