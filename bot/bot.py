@@ -6,6 +6,9 @@ import os
 
 
 BOT_TOKEN = settings.BOT_API or os.getenv("BOT_API")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_API is not configured. Set BOT_API in your .env file.")
+
 bot = AsyncTeleBot(BOT_TOKEN)
 UTC = datetime.timezone.utc
 pending_feedback = set()
@@ -19,7 +22,7 @@ FORMATS = {
     '.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif',
     '.docx', '.csv', '.pdf', '.xlsx', '.xls', '.txt' }
 
-MAX_SIZE_BYTES = 8 * 1024 * 1024
+MAX_SIZE_BYTES = 10 * 1024 * 1024
 
 CANCEL_VARIANTS = {
     "❌ Отменить / Cancel",

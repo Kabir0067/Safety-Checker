@@ -759,7 +759,7 @@ class FileConvertToText:
     MAX_SIZE_BYTES = 10 * 1024 * 1024 
     SUPPORTED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.webp', '.jfif']
     SUPPORTED_FORMATS = {
-        'word': ['.doc', '.docx'],
+        'word': ['.docx'],
         'pdf': ['.pdf'],
         'spreadsheet': ['.csv', '.xls', '.xlsx'],
         'text': ['.txt', '.text'],
@@ -773,7 +773,9 @@ class FileConvertToText:
         os.makedirs(self.LOG_DIR, exist_ok=True)
         self.logger = logging.getLogger("FileConvertToText")
         self.logger.setLevel(logging.ERROR)
-        handler = logging.FileHandler(self.LOG_FILE)
+        if self.logger.handlers:
+            self.logger.handlers.clear()
+        handler = logging.FileHandler(self.LOG_FILE, encoding="utf-8")
         handler.setLevel(logging.ERROR)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)

@@ -1,212 +1,258 @@
-# Contract Safety Checker — Telegram Bot
+﻿# Contract Safety Checker
 
-Employment contract fraud detection and reliability analysis for the UK. Upload a contract in multiple formats or paste text, the bot extracts key details, checks them via Companies House and local rules, scores the risk, and returns a clear verdict: Safe / Warning / Unsafe.
+Contract Safety Checker is a Telegram bot + admin panel that analyzes employment contracts, verifies company identity, and returns a safety score (`Safe`, `Warning`, `Unsafe`).
 
-This README reflects the current codebase in this repository (uses pyTelegramBotAPI `AsyncTeleBot`) and follows the provided technical specification.
+This repository is suitable for both:
+- a real prototype for contract pre-screening;
+- a graduation (thesis) project with practical implementation.
 
-## Key Features
-- **Multi-format intake**: .pdf, .doc/.docx, .xls/.xlsx, .csv, .jpg/.jpeg/.png/.bmp/.tiff/.webp, .txt (max 10 MB)
-- **OCR for images/scans**: OpenCV + Tesseract with adaptive preprocessing and multiple psm/oem strategies
-- **Structured data extraction**: AI (Google Gemini API) prompts to extract company info, contact details, dates, etc.
-- **Companies House verification**: Company Number/Name checks, status validation, officers lookup (async via aiohttp)
-- **Local database caching**: PostgreSQL for companies, user checks, suspicious companies
-- **Scoring system**: Rule-based scoring to produce Safe/Warning/Unsafe
-- **Multilingual UX**: RU/TJ/EN
-- **Feedback**: Sends user feedback via SMTP email
+## 1) What the system does
 
-## Tech Stack
+1. Accepts contract input as file or text.
+2. Extracts readable text (native parsing + OCR fallback).
+3. Uses AI to extract structured contract fields.
+4. Verifies company data via Companies House + local cache.
+5. Calculates risk score with rule-based checks.
+6. Saves results in SQLite and shows history/report in Telegram.
+
+## 2) Core features
+
+- Multi-format input: `.pdf`, `.docx`, `.xls`, `.xlsx`, `.csv`, `.txt`, images (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`, `.jfif`)
+- OCR pipeline (Tesseract + OpenCV preprocessing)
+- AI extraction (Gemini primary, Groq fallback)
+- Companies House verification (number/name/officers/status)
+- Risk scoring model with detailed criteria
+- Local data store (SQLite via SQLAlchemy)
+- Telegram interface in 3 languages (`ru`, `tj`, `en`)
+- Django admin panel for database monitoring
+- Feedback sending via SMTP
+
+## 3) Tech stack
+
 - Python 3.11+
-- Telegram: pyTelegramBotAPI `AsyncTeleBot` (telebot)
-- AI: Google Gemini API (via REST). Optional: Groq API fallback (Llama/Mixtral)
-- OCR & Docs: EasyOCR, OpenCV, Pillow, python-docx, aspose-words, pandas (CSV/Excel)
-- HTTP: aiohttp
-- DB: PostgreSQL + SQLAlchemy Async + asyncpg
-- Env: python-dotenv
+- Telegram: `pyTelegramBotAPI` (`AsyncTeleBot`)
+- AI APIs: Google Gemini, Groq (optional fallback)
+- OCR and document processing: `pytesseract`, `opencv-python`, `PyMuPDF`, `pdf2image`, `python-docx`, `pandas`
+- Data layer: `SQLAlchemy` + `aiosqlite` (SQLite)
+- Admin panel: `Django`
 
-## Project Structure
-```
-Safety Checker/
-  main.py                      # Entrypoint with robust polling loop
-  bot/
-    bot.py                     # AsyncTeleBot, shared state, file dir, converter
-    handlers.py                # Commands: start, help, about, check, report, language, feedback
-  config/
-    settings.py                # Reads environment variables via dotenv
-  functions/
-    file_processing.py         # Conversion to text, OCR pipelines, size/format guards
-    ai_processing.py           # Gemini API calls and extraction JSON schema
-    utils.py                   # Companies House checks, scoring logic, domain/phone validation
-  database/
-    connection.py              # Async engine/session factory
-    models.py                  # users, companies, user_checks, suspicious_companies
-    queries.py                 # CRUD helpers & history fetch
-    migrate.py                 # Create tables script
-  files/                       # Uploaded files storage (gitignored)
-  logs/                        # Error logs for processors (gitignored)
-  .env                         # Environment variables (not committed)
-  requirements.txt             # Project dependencies
+## 4) Project structure
+
+```text
+Safety-Checker/
+  main.py                     # Starts bot + Django admin together
+  manage.py                   # Django management
   README.md
+  requirements.txt
+  .env
+
+  bot/
+    bot.py                    # Bot init, global constants/state
+    handlers.py               # Telegram command handlers and workflow
+
+  functions/
+    file_processing.py        # PDF/DOCX/IMG/TXT/XLSX -> text pipeline
+    ai_processing.py          # AI prompt + response normalization
+    utils.py                  # Verification rules + scoring
+
+  database/
+    connection.py             # Async SQLite engine/session
+    models.py                 # SQLAlchemy models
+    queries.py                # CRUD/query functions
+    migrate.py                # Creates SQLAlchemy tables
+    app.db                    # SQLite database file
+
+  panel/
+  panel_app/                  # Django admin mapping for existing tables
+
+  logs/                       # Runtime logs
+  files/                      # Uploaded files (runtime)
+  tmp/                        # OCR/intermediate temp files
 ```
 
-## Environment Variables (.env)
-Create a `.env` file in the project root:
-```
-# Telegram
-BOT_API=123456:telegram-bot-token
+## 5) Environment variables
 
-# PostgreSQL
-PGUSER=postgres
-PGPASSWORD=postgres
-PGDATABASE=contract_checker
-PGHOST=127.0.0.1
-PGPORT=5432
+Create a `.env` file in project root:
 
-# SMTP feedback
-FEEDBACK_EMAIL=owner@example.com
-SMTP_USER=smtp-user@example.com
-SMTP_PASSWORD=your-smtp-password
+```env
+# Required
+BOT_API=123456789:telegram_bot_token
+GEMINI_API_KEY=your_gemini_key
+
+# Optional fallback AI
+GROQ_API_KEY=your_groq_key
+
+# Company verification API (recommended)
+COMPANIES_HOUSE_API=your_companies_house_key
+
+# SMTP (optional; required only for /feedback)
+SMTP_USER=example@mail.com
+SMTP_PASSWORD=your_password
 SMTP_HOST=smtp.example.com
 SMTP_PORT=587
+FEEDBACK_EMAIL=owner@mail.com
 
-# External APIs
-GEMINI_API_KEY=your-google-gemini-api-key
-GROQ_API_KEY=your-groq-api-key               # optional fallback
-COMPANIES_HOUSE_API=your-companies-house-api-key
+# Django/admin options
+DJANGO_SECRET_KEY=change-me
+DJANGO_DEBUG=1
+DJANGO_ALLOWED_HOSTS=*
+DJANGO_TIME_ZONE=Asia/Dushanbe
 
-# Optional: Tesseract config if needed
-# TESSDATA_PREFIX=C:\\Program Files\\Tesseract-OCR\\tessdata
+# Auto-created admin user (first run)
+DJANGO_ADMIN_USER=admin_checker
+DJANGO_ADMIN_PASS=change_this_password
+DJANGO_ADMIN_EMAIL=admin@example.com
+
+# Admin server networking (main.py)
+ADMIN_HOST=0.0.0.0
+ADMIN_PORT=8001
+ADMIN_PUBLIC_HOST=192.168.1.10
+ADMIN_OPEN_FIREWALL=1
+
+# Optional OCR override (Windows)
+# TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
-## Installation
-1. Install Python 3.11+ and PostgreSQL.
-2. Install system dependencies:
-   - **Tesseract OCR**:
-     - Windows: Install Tesseract OCR (add to PATH). Example: `C:\Program Files\Tesseract-OCR`
-     - Linux: `sudo apt-get install tesseract-ocr`
-   - **Poppler** (required for PDF processing):
-     - Linux: `sudo apt-get install poppler-utils`
-     - Windows: Download binary and add `bin` folder to PATH.
-3. Create and activate a virtual environment.
-4. Install Python deps:
-   ```bash
-   pip install -r requirements.txt
-   ```
-5. Create `.env` with the variables above.
-6. Initialize database tables:
-   ```bash
-   python database/migrate.py
-   ```
+Notes:
+- Backward compatibility is kept for old keys: `GEMINI_AI_API_KEY`, `GROQ_AI_API_KEY`.
+- Maximum upload size is `10 MB`.
 
-Note: The code uses `aspose-words` for PDF->DOCX conversion fallback. Ensure the package installs successfully (it is available from pip). For pure open-source-only environments, you can later replace this with alternative pipelines.
+## 6) Installation
 
-## Running the Bot
+### 6.1 System prerequisites
+
+- Python 3.11+
+- Tesseract OCR installed
+- Poppler (`pdftoppm`) for PDF-to-image fallback
+
+Windows:
+- Install Tesseract and optionally set `TESSERACT_CMD`
+- Install Poppler and add its `bin` directory to `PATH`
+
+Linux (example):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr poppler-utils
+```
+
+### 6.2 Python setup
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate         # Windows
+pip install -r requirements.txt
+```
+
+### 6.3 Database initialization
+
+```bash
+python database/migrate.py
+python manage.py migrate --noinput
+```
+
+## 7) Run the project
+
+Main start command:
+
 ```bash
 python main.py
 ```
 
-`main.py` sets bot commands and starts `infinity_polling` with resilience against transient network errors.
+`main.py` does:
+- SQLAlchemy table init check;
+- Django migrations;
+- superuser ensure/create;
+- starts Django admin and Telegram bot in one process manager.
 
-## Telegram Commands
-- **/start** — Welcome and quick intro
-- **/help** — How to use, supported formats, tips
-- **/about** — Features and approach
-- **/check** — Start a new contract check; send a file or paste text
-- **/report** — View history of checks and reports (as implemented in handlers)
-- **/language** — RU / TJ / EN selection
-- **/feedback** — Send feedback via email
+After launch, admin URLs are printed in console.
 
-## Supported Files and Limits
-- Formats: .pdf, .doc/.docx, .xls/.xlsx, .csv, .jpg/.jpeg/.png/.bmp/.tiff/.webp, .txt
-- Max file size: 10 MB (enforced in `functions/file_processing.py`)
-- Tips:
-  - Text-based PDFs/DOCX process faster than images
-  - Images run through OCR and may take longer
+## 8) Telegram commands
 
-## Data Extraction
-- AI prompt (Gemini) extracts the following fields as JSON:
-  - Contract Number
-  - Company Name
-  - Company Number
-  - Registered Address
-  - Contact Details
-  - Responsible Person Full Name
-  - Contract Date (normalized to YYYY-MM-DD when present)
-  - Website Domain (normalized without scheme/www)
-  - Suspicious Phrases Found
-  - Text Style (professional/template-like/unprofessional)
+- `/start` - welcome + intro
+- `/help` - usage guide
+- `/about` - project details
+- `/check` - upload file or send contract text
+- `/report` - show personal check history
+- `/language` - switch RU/TJ/EN
+- `/feedback` - send feedback email
+- `/buttons` - show inline main menu
 
-## Verification Logic (Companies House + Local DB)
-- If `Company Number` is present, fetch profile and status; cache in `companies` table
-- If only `Company Name` is present, search Companies House and optionally fetch profile for an exact active match
-- Officer check for responsible person
-- Local DB used for caching and resilience when API is slow/unavailable
+## 9) Scoring model (summary)
 
-## Scoring System
-Rules computed in `functions/utils.py` produce a total score and label:
+The system calculates 10 criteria and clamps total score to `0..100`.
 
-1. Contract Number present → +10
-2. Company Number verified via Companies House (active) → +30
-3. Company Name resolved (active company) → +30
-4. Contact details valid (phone/email/domain consistency) → +10 / −10
-5. Suspicious phrases/blacklist → −20 (or more if blacklisted)
-6. Text style (professional/template/unprofessional) → +10 / 0 / −10
-7. Website domain exists and matches company → +10 / −10
-8. Data match (company/address) with Companies House → up to +20 (applied via checks)
-9. Responsible person present/verified → up to +10
-10. Contract date recency (≤ 30 days) → +10 / −10
+Main factors:
+- contract number presence;
+- company number validity/status;
+- company name consistency;
+- registered address match;
+- contact details quality (email/phone/domain checks);
+- suspicious phrases and blacklist hits;
+- writing style quality;
+- domain existence and relevance;
+- responsible person/officer matching;
+- contract date freshness.
 
-Interpretation:
-- 80–100 → ✅ Safe
-- 50–79 → ⚠️ Warning (manual review recommended)
-- <50 → 🚨 Unsafe
+Final categories:
+- `Safe`
+- `Warning`
+- `Unsafe`
 
-## Database Schema
-- `users`: Telegram users and language
-- `companies`: cached Companies House data (name, number, address, status, website_domain, score)
-- `user_checks`: history of checks with extracted fields, total score, rating, and detailed scores
-- `suspicious_companies`: locally curated blacklist with evidence/source
+## 10) Data and security
 
-Initialize tables:
+- Data is stored locally in `database/app.db`.
+- Files are processed in runtime folders (`files/`, `tmp/`) and cleanup is applied in workflow.
+- External calls are made only to configured APIs (Gemini/Groq/Companies House/SMTP).
+- For production: set strong admin password and restrict `DJANGO_ALLOWED_HOSTS`.
+
+## 11) Verification and smoke test
+
+Run quick processing check:
+
 ```bash
-python database/migrate.py
+python verify_processing.py
 ```
 
-## Security and Rate Limiting
-- File size/type validation before processing
-- Optional throttling via user state and timeouts during `/check`
-- Companies House API requests are limited and use small concurrency and caching
-- Personal data is not stored beyond what’s required (see models)
+Compile check (optional):
 
-## Deployment
-- Any Python-capable host (e.g., VPS, Railway, Heroku with worker dyno)
-- Requires persistent Postgres and outbound HTTPS to Companies House and Google APIs
-- Configure environment variables on the platform
+```bash
+python -m py_compile main.py
+```
 
-## Roadmap / Notes
-- Current implementation uses `pyTelegramBotAPI` (`AsyncTeleBot`). The original spec mentions `aiogram`; migration is possible later.
-- Optional: Generate PDF reports with `reportlab`/`weasyprint` (not implemented in this codebase yet).
-- Optional: Scheduled sync of Companies House bulk data for faster local lookups.
+## 12) Troubleshooting
 
-## Admin Notes
-- Add yourself as admin (feature present if admin handlers are enabled in code). First, obtain your Telegram ID by sending any message to the bot and logging it, or use a dedicated `/getid` handler if present.
-- Then add the ID to the admins table (see database/migrate or use in-bot command if implemented).
-- Use admin-only commands to retrieve reports if available.
+- `BOT_API is not configured`:
+  - Set `BOT_API` in `.env`.
+- OCR fails:
+  - Confirm `tesseract` installation and `TESSERACT_CMD` path.
+- PDF OCR fallback fails:
+  - Install Poppler (`pdftoppm`).
+- AI extraction is empty:
+  - Check `GEMINI_API_KEY` and API quota.
+- Company checks fail:
+  - Set valid `COMPANIES_HOUSE_API` key.
 
-## Troubleshooting
-- aspose-words: Requires binary components from pip; if installation fails, ensure you are on a supported Python/OS version or replace PDF conversion with another library.
-- EasyOCR model download: First run may download models; allow network access. To disable GPU, it is already set to CPU by default.
-- Tesseract: Not required when using EasyOCR pipeline. If you add pytesseract, install Tesseract and set `TESSDATA_PREFIX` accordingly on Windows.
-- Companies House API: Set COMPANIES_HOUSE_API; requests are rate-limited. The code caches results in PostgreSQL.
-- SMTP: Ensure SMTP settings are correct to receive feedback via `/feedback`.
+## 13) Current status and next improvements
 
-## RU: Краткая инструкция
-- Отправьте команду `/check` и загрузите файл (.PDF/.DOCX/.XLSX/.CSV/.JPG/.PNG) или вставьте текст
-- Дождитесь результата: бот извлечёт данные, проверит компанию и рассчитает баллы
-- Итог: ✅ Безопасно | ⚠️ Требует внимания | 🚨 Рисковано
+Current state:
+- Core flow is working: input -> extraction -> verification -> score -> report history.
 
-## TJ: Дастури кӯтоҳ
-- Фармони `/check`–ро истифода баред ва файлро бор кунед ё матнро ворид намоед
-- Натиҷа пас аз таҳлил: ✅ Бехатар | ⚠️ Бо эҳтиёт | 🚨 Хатарнок
+Recommended roadmap:
+- Add automated tests for scoring and parsers.
+- Add explicit role-based admin permissions.
+- Add report export (PDF/CSV).
+- Add queue/worker mode for heavy OCR tasks.
 
----
-Maintainers: set `FEEDBACK_EMAIL` to receive in-bot feedback via `/feedback`.
+## 14) Portfolio presentation checklist
+
+For portfolio/demo, include these screenshots:
+- `[SCREENSHOT: Telegram /start and /check flow]`
+- `[SCREENSHOT: File upload and result summary]`
+- `[SCREENSHOT: Detailed /report page]`
+- `[SCREENSHOT: Django admin (users, companies, checks)]`
+- `[SCREENSHOT: Logs and runtime console]`
+
+## 15) License
+
+Educational and research use. Add your preferred open-source license if needed.

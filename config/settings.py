@@ -20,7 +20,8 @@ class Settings:
     SMTP_HOST = os.getenv("SMTP_HOST")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_AI_API_KEY")
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_AI_API_KEY")
     COMPANIES_HOUSE_API = os.getenv("COMPANIES_HOUSE_API")
 
 

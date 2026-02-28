@@ -683,6 +683,12 @@ async def process_file(file: types.Document):
 async def handle_check(message: types.Message):
     user_id = str(message.chat.id)
     user_lang = await get_lang(user_id) or 'ru'
+
+    # Ensure user exists even if /check is used before /start.
+    try:
+        await add_user(user_id, message.from_user.username, user_lang)
+    except Exception:
+        pass
     
     # Проверка, не занят ли пользователь обработкой (BR-5 fix)
     if user_id in user_state and user_state[user_id].get('processing'):
@@ -1594,4 +1600,3 @@ async def handle_main_menu_callback(call):
 
     await bot.answer_callback_query(call.id)
 # ----------------------------------------------------------------------------
-

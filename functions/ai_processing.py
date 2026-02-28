@@ -19,8 +19,9 @@ class AsyncAiProcessing:
 
     def __init__(self, contract: str):
         self.contract = contract
-        self.gemini_api_key = os.getenv("GEMINI_AI_API_KEY")
-        self.groq_api_key = os.getenv("GROQ_AI_API_KEY")
+        # Backward-compatible env lookup: support both old and current variable names.
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_AI_API_KEY")
+        self.groq_api_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_AI_API_KEY")
         self.gemini_base_url = "https://generativelanguage.googleapis.com/v1beta/models"
         self.groq_base_url = "https://api.groq.com/openai/v1"
         self._available_models: Dict[str, List[str]] = {}
@@ -46,7 +47,7 @@ class AsyncAiProcessing:
             - All website domains must be clean (no 'https://', no 'www.') and valid for online check
             - Contract Date must be extracted from text and returned in the format "%Y-%m-%d"
             - If a field is missing or not found, set its value to null
-            - DO NOT use double quotes (") inside string values. Use single quotes if needed.
+            - Escape quotes inside string values so the JSON remains valid.
             - Use null, not "null" in strings.
             Extract and output:
             1. Contract Number
