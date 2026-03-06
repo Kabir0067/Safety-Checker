@@ -1,4 +1,18 @@
-.venv
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Logs
+Logs/
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
 .env
 
-.pid
+# Local thesis text file (not for Git)
+Bobi_III_Kori_Khatm.txt
