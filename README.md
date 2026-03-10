@@ -1,4 +1,4 @@
-﻿20 commit
+﻿21 commit
 # Contract Safety Checker
 
 Contract Safety Checker is a Telegram bot + admin panel that analyzes employment contracts, verifies company identity, and returns a safety score (`Safe`, `Warning`, `Unsafe`).

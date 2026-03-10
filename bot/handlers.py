@@ -13,6 +13,7 @@ import aiosmtplib
 import datetime
 import aiofiles
 import aiohttp
+import ast
 import html
 import json
 import os
@@ -49,6 +50,8 @@ async def set_bot_commands(bot: AsyncTeleBot) -> None:
 # -----------------------------------start------------------------------------
 @bot.message_handler(commands=['start'])
 async def handle_start(message: types.Message) -> None:
+    if await _block_if_feedback(message):
+        return
     user_id = str(message.chat.id)
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -112,6 +115,8 @@ async def handle_start(message: types.Message) -> None:
 # -----------------------------------help-------------------------------------
 @bot.message_handler(commands=['help'])
 async def handle_help(message: types.Message) -> None:
+    if await _block_if_feedback(message):
+        return
     user_id = str(message.chat.id)
     lang = await get_lang(user_id) or 'ru'
 
@@ -247,6 +252,8 @@ async def handle_help(message: types.Message) -> None:
 # -----------------------------------about------------------------------------
 @bot.message_handler(commands=['about'])
 async def handle_about(message: types.Message) -> None:
+    if await _block_if_feedback(message):
+        return
     user_id = str(message.chat.id)
     lang = await get_lang(user_id) or 'ru'
 
@@ -348,6 +355,8 @@ async def after_language_start(user_id: int, first_name: Optional[str]) -> None:
 
 @bot.message_handler(commands=['language'])
 async def handle_language(message: types.Message) -> None:
+    if await _block_if_feedback(message):
+        return
     lang = await get_lang(str(message.chat.id)) or 'ru'
 
     if lang == 'ru':
@@ -363,6 +372,11 @@ async def handle_language(message: types.Message) -> None:
 async def callback_set_language(call: types.CallbackQuery) -> None:
     data = call.data  
     user_id = str(call.from_user.id)
+    user_lang = await get_lang(user_id) or 'ru'
+    if user_id in pending_feedback:
+        await _send_feedback_guard(call.message.chat.id, user_lang)
+        await bot.answer_callback_query(call.id)
+        return
 
     if data == "lang_ru":
         lang_code = 'ru'
@@ -420,9 +434,31 @@ async def set_user_language_text(message: types.Message) -> None:
 
 
 # -----------------------------------feedback---------------------------------
+async def _send_feedback_guard(chat_id: str, lang: str) -> None:
+    texts = {
+        'ru': "⚠️ Сначала завершите отзыв или нажмите «Отменить / Cancel». Команды и кнопки временно отключены.",
+        'tj': "⚠️ Лутфан аввал фикрро анҷом диҳед ё «Отменить / Cancel»-ро пахш кунед. Фармонҳо ва тугмаҳо муваққатан ғайрифаъоланд.",
+        'en': "⚠️ Please finish feedback or press Cancel. Commands and buttons are temporarily disabled.",
+    }
+    await bot.send_message(chat_id, texts.get(lang, texts['en']), reply_markup=get_cancel_keyboard())
+
+
+async def _block_if_feedback(message: types.Message) -> bool:
+    user_id = str(message.chat.id)
+    if user_id in pending_feedback:
+        lang = await get_lang(user_id) or 'ru'
+        await _send_feedback_guard(user_id, lang)
+        return True
+    return False
+
+
 @bot.message_handler(commands=['feedback'])
 async def handle_feedback(message: types.Message) -> None:
     user_id = str(message.chat.id)
+    if user_id in pending_feedback:
+        lang = await get_lang(user_id) or 'ru'
+        await _send_feedback_guard(user_id, lang)
+        return
     pending_feedback.add(user_id)
     lang = await get_lang(user_id) or 'ru'
 
@@ -455,6 +491,10 @@ async def receive_feedback(message: types.Message) -> None:
     user_id = str(message.chat.id)
     text = (message.text or "").strip()
     lang = await get_lang(user_id) or 'ru'
+
+    if text.startswith("/"):
+        await _send_feedback_guard(user_id, lang)
+        return
 
     cancel_variants = {
         "❌ Отменить / Cancel",
@@ -825,7 +865,7 @@ async def handle_photo(message: types.Message):
         print(f"handle_photo fatal error: {e}")
         fallback_texts = {
             'ru': "\u274c \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u044f. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.",
-            'tj': "\u274c Xatoi korkardi aks. Lutfan boz kushish kuned.",
+            'tj': "\u274c Хатои коркарди акс. Лутфан боз кӯшиш кунед.",
             'en': "\u274c Image processing error. Please try again.",
         }
         await bot.send_message(message.chat.id, fallback_texts.get(user_lang, fallback_texts['en']))
@@ -935,7 +975,7 @@ async def handle_document(message: types.Message):
         print(f"handle_document fatal error: {e}")
         fallback_texts = {
             'ru': "\u274c \u041e\u0448\u0438\u0431\u043a\u0430 \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u043a\u0438 \u0444\u0430\u0439\u043b\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.",
-            'tj': "\u274c Xatoi korkardi fayl. Lutfan boz kushish kuned.",
+            'tj': "\u274c Хатои коркарди файл. Лутфан боз кӯшиш кунед.",
             'en': "\u274c File processing error. Please try again.",
         }
         await bot.send_message(message.chat.id, fallback_texts.get(user_lang, fallback_texts['en']))
@@ -1017,7 +1057,7 @@ async def process_contract_text(
         if extraction_error:
             no_text = {
                 'ru': "\u274c \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c \u0447\u0438\u0442\u0430\u0435\u043c\u044b\u0439 \u0442\u0435\u043a\u0441\u0442.",
-                'tj': "\u274c Matni khondashavanda yoft nashud.",
+                'tj': "\u274c Матни хондашаванда ёфт нашуд.",
                 'en': "\u274c Unable to extract readable text.",
             }
             await bot.send_message(message.chat.id, no_text.get(user_lang, no_text['en']))
@@ -1026,7 +1066,7 @@ async def process_contract_text(
         if len(contract_text) < 50:
             short_texts = {
                 'ru': "\u26a0\ufe0f \u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u0442\u0435\u043a\u0441\u0442\u0430 \u0434\u043b\u044f \u0430\u043d\u0430\u043b\u0438\u0437\u0430. \u041e\u0442\u043f\u0440\u0430\u0432\u044c\u0442\u0435 \u043f\u043e\u043b\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0434\u043e\u0433\u043e\u0432\u043e\u0440\u0430.",
-                'tj': "\u26a0\ufe0f Baroi tahlil matn kofi nest. Matni purrai shartnomaro firisted.",
+                'tj': "\u26a0\ufe0f Барои таҳлил матн кофӣ нест. Матни пурраи шартномаро фиристед.",
                 'en': "\u26a0\ufe0f Not enough text for analysis. Please send the full contract text.",
             }
             await bot.send_message(message.chat.id, short_texts.get(user_lang, short_texts['en']))
@@ -1038,7 +1078,7 @@ async def process_contract_text(
         except asyncio.TimeoutError:
             timeout_texts = {
                 'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 AI-\u0430\u043d\u0430\u043b\u0438\u0437\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0437\u0436\u0435.",
-                'tj': "\u274c Vaqti tahlili AI ba okhir rasid. Badtar kushish kuned.",
+                'tj': "\u274c Вақти таҳлили AI ба охир расид. Баъдтар кӯшиш кунед.",
                 'en': "\u274c AI analysis timed out. Please try again later.",
             }
             await bot.send_message(message.chat.id, timeout_texts.get(user_lang, timeout_texts['en']))
@@ -1047,7 +1087,7 @@ async def process_contract_text(
         if not ai_result or not isinstance(ai_result, dict):
             failed_texts = {
                 'ru': "\u274c \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0442\u0435\u043a\u0441\u0442\u0430.",
-                'tj': "\u274c Malumoti lozima az matn girifta nashud.",
+                'tj': "\u274c Маълумоти лозима аз матн гирифта нашуд.",
                 'en': "\u274c Failed to extract data from text.",
             }
             await bot.send_message(message.chat.id, failed_texts.get(user_lang, failed_texts['en']))
@@ -1059,7 +1099,7 @@ async def process_contract_text(
         except asyncio.TimeoutError:
             verify_timeout = {
                 'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 \u044d\u0442\u0430\u043f\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438.",
-                'tj': "\u274c Vaqti marhilai sanjishi shirkat ba okhir rasid.",
+                'tj': "\u274c Вақти марҳилаи санҷиши ширкат ба охир расид.",
                 'en': "\u274c Company verification step timed out.",
             }
             await bot.send_message(message.chat.id, verify_timeout.get(user_lang, verify_timeout['en']))
@@ -1181,7 +1221,7 @@ async def process_contract_text(
         print(f"process_contract_text fatal error: {e}")
         fail_texts = {
             'ru': "\u274c \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430 \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438.",
-            'tj': "\u274c Xatoi sistema hangomi sanjish.",
+            'tj': "\u274c Хатои система ҳангоми санҷиш.",
             'en': "\u274c System error during verification.",
         }
         await bot.send_message(message.chat.id, fail_texts.get(user_lang, fail_texts['en']))
@@ -1200,6 +1240,8 @@ async def process_contract_text(
 # -----------------------------------report------------------------------------
 @bot.message_handler(commands=['report'])
 async def handle_report(message: types.Message):
+    if await _block_if_feedback(message):
+        return
     cancel_check(str(message.chat.id))
 
     user_id = message.chat.id
@@ -1312,7 +1354,10 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
 
     check_date = check.get('created_at')
     if isinstance(check_date, datetime.datetime):
-        check_date = check_date.strftime("%d.%m.%Y %H:%M")
+        if check_date.tzinfo is not None:
+            check_date = check_date.astimezone().strftime("%d.%m.%Y %H:%M %Z")
+        else:
+            check_date = check_date.strftime("%d.%m.%Y %H:%M")
     elif not check_date:
         check_date = "N/A"
 
@@ -1387,37 +1432,85 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
         try:
             detailed_scores = json.loads(detailed_scores)
         except Exception:
-            detailed_scores = {}
+            try:
+                detailed_scores = ast.literal_eval(detailed_scores)
+            except Exception:
+                detailed_scores = {}
 
 
 
-    categories = [
-        ('Company Verified', {'ru': '? ???????? ????????', 'tj': '? ??????? ??????', 'en': '? Company Verified'}),
-        ('Company Status', {'ru': '?? ?????? ????????', 'tj': '?? ?????? ??????', 'en': '?? Company Status'}),
-        ('Address Match Score', {'ru': '?? ?????????? ??????', 'tj': '?? ?????????? ??????', 'en': '?? Address Match Score'}),
-        ('Email Domain', {'ru': '?? ????? email', 'tj': '?? ?????? email', 'en': '?? Email Domain'}),
-        ('Company Domain', {'ru': '?? ????? ????????', 'tj': '?? ?????? ??????', 'en': '?? Company Domain'}),
-        ('Domain Match', {'ru': '?? ?????????? ??????', 'tj': '?? ?????????? ?????', 'en': '?? Domain Match'}),
-        ('Free Email Provider', {'ru': '?? ?????????? email', 'tj': '?? Email-? ??????', 'en': '?? Free Email Provider'}),
-        ('Template Reuse', {'ru': '?? ?????? ???????', 'tj': '?? ??????? ??????', 'en': '?? Template Reuse'}),
-        ('Contract Date Warning', {'ru': '?? ?????????????? ????', 'tj': '?? ????? ?? ????', 'en': '?? Contract Date Warning'}),
-        ('Risk Flags', {'ru': '?? ????? ?????', 'tj': '?? ????????? ????', 'en': '?? Risk Flags'})
+
+    new_categories = [
+        ('Company Verified', {'ru': 'Компания подтверждена', 'tj': 'Ширкат тасдиқ шуд', 'en': 'Company Verified'}),
+        ('Company Status', {'ru': 'Статус компании', 'tj': 'Ҳолати ширкат', 'en': 'Company Status'}),
+        ('Address Match Score', {'ru': 'Совпадение адреса', 'tj': 'Мутобиқати суроға', 'en': 'Address Match Score'}),
+        ('Email Domain', {'ru': 'Домен email', 'tj': 'Домени email', 'en': 'Email Domain'}),
+        ('Company Domain', {'ru': 'Домен компании', 'tj': 'Домени ширкат', 'en': 'Company Domain'}),
+        ('Domain Match', {'ru': 'Совпадение домена', 'tj': 'Мутобиқати домен', 'en': 'Domain Match'}),
+        ('Free Email Provider', {'ru': 'Бесплатный email-провайдер', 'tj': 'Провайдери email-и ройгон', 'en': 'Free Email Provider'}),
+        ('Template Reuse', {'ru': 'Повтор шаблона', 'tj': 'Такрори қолаб', 'en': 'Template Reuse'}),
+        ('Contract Date Warning', {'ru': 'Предупреждение по дате договора', 'tj': 'Огоҳӣ оид ба санаи шартнома', 'en': 'Contract Date Warning'}),
+        ('Risk Flags', {'ru': 'Флаги риска', 'tj': 'Нишонаҳои хатар', 'en': 'Risk Flags'})
     ]
 
+    legacy_categories = [
+        ('Contract Number', {'ru': 'Номер договора', 'tj': 'Рақами шартнома', 'en': 'Contract Number'}),
+        ('Company Number', {'ru': 'Номер компании', 'tj': 'Рақами ширкат', 'en': 'Company Number'}),
+        ('Company Name', {'ru': 'Название компании', 'tj': 'Номи ширкат', 'en': 'Company Name'}),
+        ('Registered Address', {'ru': 'Юридический адрес', 'tj': 'Суроғаи қайд', 'en': 'Registered Address'}),
+        ('Contact Details', {'ru': 'Контакты', 'tj': 'Тамос', 'en': 'Contact Details'}),
+        ('Suspicious Phrases', {'ru': 'Подозрительные фразы', 'tj': 'Ибораҳои шубҳанок', 'en': 'Suspicious Phrases'}),
+        ('Text Style', {'ru': 'Стиль текста', 'tj': 'Сабки матн', 'en': 'Text Style'}),
+        ('Website Domain', {'ru': 'Домен сайта', 'tj': 'Домени сайт', 'en': 'Website Domain'}),
+        ('Responsible Person', {'ru': 'Ответственное лицо', 'tj': 'Шахси масъул', 'en': 'Responsible Person'}),
+        ('Contract Date', {'ru': 'Дата договора', 'tj': 'Санаи шартнома', 'en': 'Contract Date'})
+    ]
+
+    new_keys = {k for k, _ in new_categories}
+    legacy_keys = {k for k, _ in legacy_categories}
+
+    if any(k in detailed_scores for k in new_keys):
+        categories = new_categories
+        no_details = False
+    elif any(k in detailed_scores for k in legacy_keys):
+        categories = legacy_categories
+        no_details = False
+    else:
+        categories = new_categories
+        no_details = True
+
+    yes_no = {
+        'ru': ('Да', 'Нет'),
+        'tj': ('Ҳа', 'Не'),
+        'en': ('Yes', 'No')
+    }
+    no_details_map = {
+        'ru': 'Нет подробных данных.',
+        'tj': 'Маълумоти муфассал нест.',
+        'en': 'No detailed data available.'
+    }
+
     details_lines = [L['detailed_scores'], ""]
-    for key, label_map in categories:
-        display = label_map.get(lang, label_map['en'])
-        value = detailed_scores.get(key, None)
-        if isinstance(value, list):
-            value_text = ", ".join(str(x) for x in value) if value else L['no_value']
-        elif isinstance(value, bool):
-            value_text = "Yes" if value else "No"
-        elif value is None or value == "":
-            value_text = L['no_value']
-        else:
-            value_text = str(value)
-        presence = "✅" if value and value not in (0, "0", False) else "⚪"
-        details_lines.append(f"{presence} <b>{display}:</b> <code>{value_text}</code>")
+    if no_details:
+        details_lines.append(no_details_map.get(lang, no_details_map['en']))
+    else:
+        for key, label_map in categories:
+            display = label_map.get(lang, label_map['en'])
+            key_present = key in detailed_scores
+            value = detailed_scores.get(key, None)
+            if not key_present:
+                value_text = L['no_value']
+            elif isinstance(value, list):
+                value_text = ", ".join(str(x) for x in value) if value else L['no_value']
+            elif isinstance(value, bool):
+                yes_text, no_text = yes_no.get(lang, yes_no['en'])
+                value_text = yes_text if value else no_text
+            elif value is None or value == "":
+                value_text = L['no_value']
+            else:
+                value_text = str(value)
+            presence = "✅" if key_present else "⚪"
+            details_lines.append(f"{presence} <b>{display}:</b> <code>{value_text}</code>")
 
     details_text = "\n".join(details_lines)
     full_text = header_text + "\n" + details_text
@@ -1463,6 +1556,10 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
 async def handle_report_callback(call: types.CallbackQuery):
     user_id = call.from_user.id
     user_lang = await get_lang(str(user_id)) or 'en'
+    if str(user_id) in pending_feedback:
+        await _send_feedback_guard(call.message.chat.id, user_lang)
+        await bot.answer_callback_query(call.id)
+        return
     data = call.data
 
     def _get_index_from(data_str: str):
@@ -1505,6 +1602,8 @@ async def handle_report_callback(call: types.CallbackQuery):
 # ----------------------------------Buttons-----------------------------------
 @bot.message_handler(commands=['buttons'])
 async def handle_buttons(message: types.Message):
+    if await _block_if_feedback(message):
+        return
     user_id = str(message.chat.id)
     user_lang = await get_lang(user_id) or 'en'
     markup = get_main_menu_inline(user_lang)
@@ -1572,6 +1671,8 @@ def get_main_menu_inline(lang: str = 'en') -> InlineKeyboardMarkup:
 
 @bot.message_handler(func=lambda message: True)
 async def handle_all_other_messages(message: types.Message):
+    if await _block_if_feedback(message):
+        return
     user_id = str(message.chat.id)
     lang = await get_lang(user_id) or 'en'
     text = message.text.strip() if message.text else ""
@@ -1585,7 +1686,7 @@ async def handle_all_other_messages(message: types.Message):
     await bot.send_message(
         message.chat.id,
         msg,
-        reply_markup=get_main_menu_inline(),
+        reply_markup=get_main_menu_inline(lang),
         parse_mode='HTML'
     )
 
@@ -1594,6 +1695,10 @@ async def handle_all_other_messages(message: types.Message):
 async def handle_main_menu_callback(call):
     user_id = str(call.from_user.id)
     user_lang = await get_lang(user_id) or 'en'
+    if user_id in pending_feedback:
+        await _send_feedback_guard(call.message.chat.id, user_lang)
+        await bot.answer_callback_query(call.id)
+        return
     data = call.data
 
     if data == "menu_language":
