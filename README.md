@@ -1,4 +1,5 @@
-﻿# Contract Safety Checker
+﻿20 commit
+# Contract Safety Checker
 
 Contract Safety Checker is a Telegram bot + admin panel that analyzes employment contracts, verifies company identity, and returns a safety score (`Safe`, `Warning`, `Unsafe`).
 
@@ -11,17 +12,20 @@ This repository is suitable for both:
 1. Accepts contract input as file or text.
 2. Extracts readable text (native parsing + OCR fallback).
 3. Uses AI to extract structured contract fields.
-4. Verifies company data via Companies House + local cache.
-5. Calculates risk score with rule-based checks.
-6. Saves results in SQLite and shows history/report in Telegram.
+4. Verifies company data via Companies House (number or name) + local cache.
+5. Checks status, address match, email/domain signals, and template reuse.
+6. Calculates risk score with rule-based checks and overrides.
+7. Saves results in SQLite and shows history/report in Telegram.
 
 ## 2) Core features
 
 - Multi-format input: `.pdf`, `.docx`, `.xls`, `.xlsx`, `.csv`, `.txt`, images (`.jpg`, `.jpeg`, `.png`, `.bmp`, `.tiff`, `.webp`, `.jfif`)
 - OCR pipeline (Tesseract + OpenCV preprocessing)
-- AI extraction (Gemini primary, Groq fallback)
-- Companies House verification (number/name/officers/status)
-- Risk scoring model with detailed criteria
+- AI extraction (Gemini + Groq + OpenRouter with automatic fallback)
+- Companies House verification (number/name, status, address match)
+- Email/domain validation (free providers + mismatch detection)
+- Contract template hashing and reuse detection
+- Risk scoring model with override rules
 - Local data store (SQLite via SQLAlchemy)
 - Telegram interface in 3 languages (`ru`, `tj`, `en`)
 - Django admin panel for database monitoring
@@ -31,7 +35,7 @@ This repository is suitable for both:
 
 - Python 3.11+
 - Telegram: `pyTelegramBotAPI` (`AsyncTeleBot`)
-- AI APIs: Google Gemini, Groq (optional fallback)
+- AI APIs: Google Gemini, Groq, OpenRouter (optional fallback)
 - OCR and document processing: `pytesseract`, `opencv-python`, `PyMuPDF`, `pdf2image`, `python-docx`, `pandas`
 - Data layer: `SQLAlchemy` + `aiosqlite` (SQLite)
 - Admin panel: `Django`
@@ -81,6 +85,9 @@ GEMINI_API_KEY=your_gemini_key
 
 # Optional fallback AI
 GROQ_API_KEY=your_groq_key
+OPENROUTER_API_KEY=your_openrouter_key
+OPENROUTER_APP_URL=https://your-app.example
+OPENROUTER_APP_NAME=Safety-Checker
 
 # Company verification API (recommended)
 COMPANIES_HOUSE_API=your_companies_house_key
@@ -114,7 +121,7 @@ ADMIN_OPEN_FIREWALL=1
 ```
 
 Notes:
-- Backward compatibility is kept for old keys: `GEMINI_AI_API_KEY`, `GROQ_AI_API_KEY`.
+- Backward compatibility is kept for old keys: `GEMINI_AI_API_KEY`, `GROQ_AI_API_KEY`, `OPEN_ROUTER`, `OPEN_ROUTER_API_KEY`.
 - Maximum upload size is `10 MB`.
 
 ## 6) Installation
@@ -180,19 +187,25 @@ After launch, admin URLs are printed in console.
 
 ## 9) Scoring model (summary)
 
-The system calculates 10 criteria and clamps total score to `0..100`.
+The system uses a risk-based model and clamps total score to `0..100`, with override rules for critical risks.
 
-Main factors:
-- contract number presence;
-- company number validity/status;
-- company name consistency;
-- registered address match;
-- contact details quality (email/phone/domain checks);
-- suspicious phrases and blacklist hits;
-- writing style quality;
-- domain existence and relevance;
-- responsible person/officer matching;
-- contract date freshness.
+Positive signals:
+- `+40` verified company (Companies House active)
+- `+20` address match (`>=70%` similarity)
+- `+10` domain match (email domain vs company domain)
+
+Negative signals:
+- `-50` company not found
+- `-40` company dissolved/liquidation
+- `-20` domain mismatch
+- `-15` free email provider
+- `-20` address mismatch
+
+Overrides and warnings:
+- If company is not found or dissolved/liquidation -> `Unsafe`
+- Manual blacklist hit -> `Unsafe`
+- Template reuse across different company names -> downgrade `Safe` to `Warning`
+- Contract date > 1 year in future or older than 5 years -> warning
 
 Final categories:
 - `Safe`
@@ -208,17 +221,23 @@ Final categories:
 
 ## 11) Verification and smoke test
 
-Run quick processing check:
-
-```bash
-python verify_processing.py
-```
-
-Compile check (optional):
+Quick checks:
 
 ```bash
 python -m py_compile main.py
 ```
+
+Then run:
+
+```bash
+python main.py
+```
+
+Test `/check` with:
+- a contract that includes a company number;
+- a contract with only company name;
+- an email from a free provider (gmail/yahoo);
+- a mismatching address.
 
 ## 12) Troubleshooting
 

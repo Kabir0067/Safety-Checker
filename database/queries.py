@@ -1,9 +1,9 @@
-from database.models import User, Company, UserCheck, SuspiciousCompany
+from database.models import User, Company, UserCheck, SuspiciousCompany, SuspiciousEntity
 from database.connection import AsyncSessionLocal
 from typing import Optional, List, Dict, Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select, func, case, delete, and_
-from datetime import datetime
+from datetime import datetime, date
 import zipfile
 import csv
 import os
@@ -18,6 +18,25 @@ def _clean_optional_string(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text if text else None
+
+
+def _clean_optional_date(value: Any) -> Optional[date]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+    return None
 
 
 def _is_meaningful(value: Any) -> bool:
@@ -80,6 +99,7 @@ async def add_company(data: Dict[str, Any]) -> Optional[int]:
         "website_domain": _clean_optional_string(data.get("website_domain")),
         "contact_email": _clean_optional_string(data.get("contact_email")),
         "phone_number": _clean_optional_string(data.get("phone_number")),
+        "incorporation_date": _clean_optional_date(data.get("incorporation_date")),
         "last_updated": datetime.utcnow(),
     }
 
@@ -160,6 +180,7 @@ async def get_company_by_number(company_number: str) -> Optional[Dict[str, Any]]
                     "website_domain": company.website_domain,
                     "contact_email": company.contact_email,
                     "phone_number": company.phone_number,
+                    "incorporation_date": company.incorporation_date,
                     "last_updated": company.last_updated, 
                     "created_at": company.created_at
                 }
@@ -181,6 +202,7 @@ async def add_user_check(check_data: Dict[str, Any]) -> Optional[int]:
                 extracted_company_number=check_data.get('extracted_company_number'),
                 extracted_address=check_data.get('extracted_address'),
                 website_domain=check_data.get('website_domain'),
+                contract_template_hash=check_data.get('contract_template_hash'),
                 total_score=check_data.get('total_score', 0),
                 safety_rating=check_data.get('safety_rating', 'unknown'),
                 detailed_scores=check_data.get('detailed_scores', {}),
@@ -288,6 +310,26 @@ async def add_suspicious_company(data: Dict[str, Any]) -> Optional[int]:
             return None
 
 
+async def add_suspicious_entity(data: Dict[str, Any]) -> Optional[int]:
+    async with AsyncSessionLocal() as session:
+        try:
+            entity = SuspiciousEntity(
+                email_domain=_clean_optional_string(data.get("email_domain")),
+                phone_number=_clean_optional_string(data.get("phone_number")),
+                recruiter_name=_clean_optional_string(data.get("recruiter_name")),
+                contract_template_hash=_clean_optional_string(data.get("contract_template_hash")),
+                source=_clean_optional_string(data.get("source")),
+            )
+            session.add(entity)
+            await session.commit()
+            await session.refresh(entity)
+            return entity.id
+        except SQLAlchemyError as e:
+            await session.rollback()
+            print(f"Error adding suspicious entity: {e}")
+            return None
+
+
 async def check_suspicious_company(company_number: str = None, company_name: str = None) -> Optional[Dict]:
     async with AsyncSessionLocal() as session:
         try:
@@ -350,6 +392,26 @@ async def get_companies_by_name(company_name: str) -> List[Dict[str, Any]]:
             return [company.__dict__ for company in companies]
         except SQLAlchemyError as e:
             print(f"❌ Error fetching companies by name: {e}")
+            return []
+
+
+async def get_distinct_company_names_by_template(template_hash: str) -> List[str]:
+    if not template_hash:
+        return []
+    async with AsyncSessionLocal() as session:
+        try:
+            stmt = select(UserCheck.extracted_company_name).where(
+                UserCheck.contract_template_hash == template_hash
+            )
+            result = await session.execute(stmt)
+            names = []
+            for row in result.fetchall():
+                name = row[0]
+                if name and isinstance(name, str) and name.strip():
+                    names.append(name.strip())
+            return list(dict.fromkeys(names))
+        except SQLAlchemyError as e:
+            print(f"Error fetching template company names: {e}")
             return []
         
 

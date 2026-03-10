@@ -770,76 +770,75 @@ class AsyncAiProcessing:
 
 # contract_real = """
 # EMPLOYMENT AGREEMENT
-
+#
 # This Employment Agreement (the "Agreement") is entered into as of 15th October 2025 (the "Effective Date"), by and between:
-
+#
 # HSBC BANK PLC, a public limited company incorporated in England and Wales with company number 00014259, whose registered office is at 8 Canada Square, London, E14 5HQ, United Kingdom (the "Company"), and
-
-# Mr. Kabir Rahmonov, residing at 15 St. James’s Street, London, SW1A 1EF, United Kingdom (the "Employee").
-
+#
+# Mr. Kabir Rahmonov, residing at 15 St. James's Street, London, SW1A 1EF, United Kingdom (the "Employee").
+#
 # WHEREAS, the Company desires to employ the Employee as a Junior Data Analyst, and the Employee desires to accept such employment on the terms and conditions set forth herein;
-
+#
 # NOW, THEREFORE, in consideration of the mutual promises and covenants contained herein, the parties agree as follows:
-
+#
 # 1. POSITION AND DUTIES
 #    1.1 The Employee shall serve as Junior Data Analyst within the Global Banking and Markets Division, reporting to the Head of Data Analytics.
 #    1.2 Start Date: 1 December 2025.
 #    1.3 Place of Work: HSBC Bank PLC, 8 Canada Square, London, E14 5HQ, with the possibility of hybrid work (remote and office-based).
 #    1.4 The Employee agrees to comply with all applicable HSBC Group policies, including Data Protection, Confidentiality, and Conduct Codes.
-
+#
 # 2. COMPENSATION
 #    2.1 Base Salary: GBP 52,000 per annum, payable monthly in arrears via direct deposit.
 #    2.2 Annual Performance Bonus: Up to 10% of base salary, based on individual and corporate performance metrics.
-#    2.3 Pension Scheme: The Employee shall be entitled to participate in the Company’s contributory pension plan in accordance with its terms.
+#    2.3 Pension Scheme: The Employee shall be entitled to participate in the Company's contributory pension plan in accordance with its terms.
 #    2.4 Other Benefits: Health insurance, employee assistance program, and annual leave of 25 working days per year.
-
+#
 # 3. CONTACT INFORMATION
 #    Company Email: customerrelations@hsbc.com
 #    HR Contact: Ms. Emma Richardson, HR Business Partner
 #    Telephone: +44 (0)20 7991 8888
 #    Company Website: https://www.hsbc.com
-
+#
 # 4. TERM AND TERMINATION
-#    4.1 This Agreement shall continue until terminated by either party with three (3) months’ written notice.
+#    4.1 This Agreement shall continue until terminated by either party with three (3) months' written notice.
 #    4.2 The Company may terminate this Agreement immediately in the event of gross misconduct, fraud, data breach, or breach of confidentiality.
 #    4.3 Upon termination, the Employee shall return all Company property and confidential information.
-
+#
 # 5. CONFIDENTIALITY AND INTELLECTUAL PROPERTY
 #    5.1 All analyses, reports, datasets, models, and other intellectual property developed by the Employee in the course of employment shall remain the exclusive property of the Company.
 #    5.2 The Employee agrees to sign a separate Non-Disclosure and Intellectual Property Assignment Agreement.
-
+#
 # 6. COMPLIANCE AND ETHICS
-#    6.1 The Employee must at all times adhere to HSBC’s Global Standards on Financial Crime Risk and Anti-Money Laundering (AML) procedures.
+#    6.1 The Employee must at all times adhere to HSBC's Global Standards on Financial Crime Risk and Anti-Money Laundering (AML) procedures.
 #    6.2 Any violation of these standards may result in disciplinary action or termination.
-
+#
 # 7. GOVERNING LAW
 #    This Agreement shall be governed by and construed in accordance with the laws of England and Wales. Any disputes shall be settled by arbitration in London under the rules of the London Court of International Arbitration (LCIA).
-
+#
 # IN WITNESS WHEREOF, the parties have executed this Agreement as of the Effective Date.
-
+#
 # HSBC BANK PLC
 # /s/ Mr. Jonathan Evans
 # Jonathan Evans, Director of Human Resources
 # Date: 15 October 2025
-
+#
 # EMPLOYEE
 # /s/ Kabir Rahmonov
 # Kabir Rahmonov
 # Date: 15 October 2025
-
+#
 # Contract Reference: HSBC-EMP-2025-214
 # Registered in England & Wales | Company No. 00014259
 # VAT No. GB 365 6845 14
 # Registered Office: 8 Canada Square, London, E14 5HQ, United Kingdom
 # """
-
-
+#
+#
 # if __name__ == "__main__":
 #     async def main():
-#         processor = AsyncAiProcessing(contract = contract_real)
+#         processor = AsyncAiProcessing(contract=contract_real)
 #         result = await processor.get_answer_json_dict()
 #         print(json.dumps(result, indent=2, ensure_ascii=False))
-
+#
 #     asyncio.run(main())
-
 

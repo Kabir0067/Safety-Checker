@@ -1076,13 +1076,33 @@ async def process_contract_text(
 
         company_id = None
         try:
-            company_name = ai_result.get('Company Name')
-            if company_name:
+            official_number = detailed_report.get("official_company_number") or ai_result.get("Company Number")
+            if official_number:
+                db_company = await get_company_by_number(official_number)
+                if db_company:
+                    company_id = db_company.get("id")
+                else:
+                    company_status = detailed_report.get("company_status")
+                    if isinstance(company_status, str) and company_status.lower() == "unknown":
+                        company_status = None
+                    payload = {
+                        'name': detailed_report.get("official_company_name") or ai_result.get('Company Name'),
+                        'company_number': official_number,
+                        'registered_address': detailed_report.get("official_registered_address") or ai_result.get('Registered Address'),
+                        'status': company_status,
+                        'score': total_score,
+                        'website_domain': ai_result.get('Website Domain'),
+                        'contact_email': None,
+                        'phone_number': None,
+                        'incorporation_date': detailed_report.get("incorporation_date"),
+                    }
+                    company_id = await add_company(payload)
+            elif ai_result.get('Company Name'):
                 payload = {
-                    'name': company_name,
-                    'company_number': ai_result.get('Company Number'),
+                    'name': ai_result.get('Company Name'),
+                    'company_number': None,
                     'registered_address': ai_result.get('Registered Address'),
-                    'status': 'unknown',
+                    'status': None,
                     'score': total_score,
                     'website_domain': ai_result.get('Website Domain'),
                     'contact_email': None,
@@ -1118,6 +1138,7 @@ async def process_contract_text(
                 'extracted_company_number': ai_result.get('Company Number'),
                 'extracted_address': ai_result.get('Registered Address'),
                 'website_domain': ai_result.get('Website Domain'),
+                'contract_template_hash': detailed_report.get('contract_template_hash'),
                 'total_score': total_score,
                 'safety_rating': status,
                 'detailed_scores': detailed_report.get('detailed_scores', {})
@@ -1126,28 +1147,21 @@ async def process_contract_text(
             print(f"add_user_check error: {e}")
 
         try:
-            suspicious = (
-                total_score < 50
-                or (isinstance(ai_result.get('Suspicious Phrases Found'), list) and ai_result.get('Suspicious Phrases Found'))
-            )
-            if suspicious:
-                name = ai_result.get('Company Name')
-                number = ai_result.get('Company Number')
-                if name or number:
-                    await add_suspicious_company({
-                        'company_name': name or (number and f"Company {number}"),
-                        'company_number': number,
-                        'evidence': json.dumps({'ai': ai_result, 'report': detailed_report}),
-                        'source': 'bot_auto',
-                        'status': 'active',
-                        'website_domain': ai_result.get('Website Domain'),
-                        'registered_address': ai_result.get('Registered Address'),
-                        'contact_phone': None,
-                        'contact_email': None,
-                        'added_by': user_db_id
-                    })
+            risk_flags = detailed_report.get('risk_flags') or []
+            contact_details = str(ai_result.get('Contact Details') or "")
+            phone_match = re.findall(r"\+?\d[\d\s().-]{7,}\d", contact_details)
+            phone_number = phone_match[0].strip() if phone_match else None
+            recruiter_name = ai_result.get('Responsible Person Full Name')
+            if risk_flags and any([detailed_report.get('email_domain'), phone_number, recruiter_name, detailed_report.get('contract_template_hash')]):
+                await add_suspicious_entity({
+                    'email_domain': detailed_report.get('email_domain'),
+                    'phone_number': phone_number,
+                    'recruiter_name': recruiter_name,
+                    'contract_template_hash': detailed_report.get('contract_template_hash'),
+                    'source': 'bot_auto',
+                })
         except Exception as e:
-            print(f"add_suspicious_company error: {e}")
+            print(f"add_suspicious_entity error: {e}")
 
         pretty_summary = _build_pretty_summary(
             lang=user_lang,
@@ -1375,17 +1389,19 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
         except Exception:
             detailed_scores = {}
 
+
+
     categories = [
-        ('Contract Number', {'ru': '📄 Номер договора', 'tj': '📄 Рақами шартнома', 'en': '📄 Contract Number'}),
-        ('Company Number', {'ru': '🏢 Номер компании', 'tj': '🏢 Рақами ширкат', 'en': '🏢 Company Number'}),
-        ('Company Name', {'ru': '📛 Название компании', 'tj': '📛 Номи ширкат', 'en': '📛 Company Name'}),
-        ('Registered Address', {'ru': '📍 Адрес', 'tj': '📍 Суроға', 'en': '📍 Registered Address'}),
-        ('Contact Details', {'ru': '📞 Контакты', 'tj': '📞 Тамос', 'en': '📞 Contact Details'}),
-        ('Suspicious Phrases', {'ru': '⚠️ Подозрительные фразы', 'tj': '⚠️ Ибораҳои шубҳанок', 'en': '⚠️ Suspicious Phrases'}),
-        ('Text Style', {'ru': '📝 Стиль текста', 'tj': '📝 Услуби матн', 'en': '📝 Text Style'}),
-        ('Website Domain', {'ru': '🌐 Веб-сайт', 'tj': '🌐 Веб-сайт', 'en': '🌐 Website Domain'}),
-        ('Responsible Person', {'ru': '👤 Ответственное лицо', 'tj': '👤 Шахси масъул', 'en': '👤 Responsible Person'}),
-        ('Contract Date', {'ru': '📅 Дата договора', 'tj': '📅 Санаи шартнома', 'en': '📅 Contract Date'})
+        ('Company Verified', {'ru': '? ???????? ????????', 'tj': '? ??????? ??????', 'en': '? Company Verified'}),
+        ('Company Status', {'ru': '?? ?????? ????????', 'tj': '?? ?????? ??????', 'en': '?? Company Status'}),
+        ('Address Match Score', {'ru': '?? ?????????? ??????', 'tj': '?? ?????????? ??????', 'en': '?? Address Match Score'}),
+        ('Email Domain', {'ru': '?? ????? email', 'tj': '?? ?????? email', 'en': '?? Email Domain'}),
+        ('Company Domain', {'ru': '?? ????? ????????', 'tj': '?? ?????? ??????', 'en': '?? Company Domain'}),
+        ('Domain Match', {'ru': '?? ?????????? ??????', 'tj': '?? ?????????? ?????', 'en': '?? Domain Match'}),
+        ('Free Email Provider', {'ru': '?? ?????????? email', 'tj': '?? Email-? ??????', 'en': '?? Free Email Provider'}),
+        ('Template Reuse', {'ru': '?? ?????? ???????', 'tj': '?? ??????? ??????', 'en': '?? Template Reuse'}),
+        ('Contract Date Warning', {'ru': '?? ?????????????? ????', 'tj': '?? ????? ?? ????', 'en': '?? Contract Date Warning'}),
+        ('Risk Flags', {'ru': '?? ????? ?????', 'tj': '?? ????????? ????', 'en': '?? Risk Flags'})
     ]
 
     details_lines = [L['detailed_scores'], ""]

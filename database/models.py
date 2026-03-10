@@ -25,6 +25,7 @@ class Company(Base):
     website_domain = Column(String(255))
     contact_email = Column(String(255))
     phone_number = Column(String(50))
+    incorporation_date = Column(Date)
     last_updated = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
@@ -41,6 +42,7 @@ class UserCheck(Base):
     extracted_company_number = Column(String(50))
     extracted_address = Column(Text)
     website_domain = Column(String(255))
+    contract_template_hash = Column(String(64))
     total_score = Column(Integer, default=0)
     safety_rating = Column(String(10), default="unknown")
     detailed_scores = Column(JSON)
@@ -66,3 +68,15 @@ class SuspiciousCompany(Base):
     verified_at = Column(TIMESTAMP(timezone=True))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), onupdate=func.now())
+
+
+class SuspiciousEntity(Base):
+    __tablename__ = "suspicious_entities"
+
+    id = Column(Integer, primary_key=True)
+    email_domain = Column(String(255))
+    phone_number = Column(String(50))
+    recruiter_name = Column(String(255))
+    contract_template_hash = Column(String(64))
+    source = Column(String(100))
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())

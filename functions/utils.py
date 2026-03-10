@@ -4,23 +4,24 @@ import sys
 if __name__ == "__main__" and __package__ is None:
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Dict, List, Any, Tuple, Optional
 from asyncio import Semaphore
 from aiohttp import BasicAuth, ClientTimeout
 from database.queries import (
     add_company,
-    check_suspicious_company,
-    delete_company_by_number,
     get_companies_by_name,
     get_company_by_number,
+    check_suspicious_company,
+    delete_company_by_number,
+    get_distinct_company_names_by_template,
 )
-import dns.resolver
 import aiohttp
 import asyncio
 import logging
 import re
+import hashlib
+import difflib
 
 
 class AsyncCheckAnalysisContract:
@@ -30,13 +31,37 @@ class AsyncCheckAnalysisContract:
     def __init__(self, ai_result: Dict[str, Any], raw_contract_text: str = ""):
         self.data = ai_result or {}
         self.raw_contract_text = raw_contract_text or ""
-        self.score = [0] * 10
         self.api_key = os.getenv("COMPANIES_HOUSE_API")
         self.base_url = "https://api.company-information.service.gov.uk"
         self.session: Optional[aiohttp.ClientSession] = None
         self.semaphore = Semaphore(2)
         self.db_company: Optional[Dict[str, Any]] = None
-        self.executor = ThreadPoolExecutor(max_workers=5)
+
+        self.company_verified = False
+        self.company_not_found = False
+        self.company_high_risk = False
+        self.company_lookup_failed = False
+        self.company_status: Optional[str] = None
+        self.official_company_name: Optional[str] = None
+        self.official_company_number: Optional[str] = None
+        self.official_registered_address: str = ""
+        self.incorporation_date: Optional[date] = None
+
+        self.address_match_score: Optional[int] = None
+        self.address_match_ok = False
+        self.address_mismatch = False
+
+        self.email_domain: Optional[str] = None
+        self.company_domain: Optional[str] = None
+        self.domain_match = False
+        self.domain_mismatch = False
+        self.free_email_provider = False
+
+        self.template_hash: Optional[str] = None
+        self.template_reuse = False
+        self.contract_date_warning = False
+        self.manual_blacklist = False
+        self.risk_flags: List[str] = []
 
         os.makedirs(self.LOG_DIR, exist_ok=True)
         self.logger = logging.getLogger("AsyncCheckAnalysisContract")
@@ -62,7 +87,6 @@ class AsyncCheckAnalysisContract:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session and not self.session.closed:
             await self.session.close()
-        self.executor.shutdown(wait=False)
 
     def _normalize_company_number(self, value: Any) -> str:
         if value is None:
@@ -87,26 +111,6 @@ class AsyncCheckAnalysisContract:
             return ""
         return str(info.get("company_name") or info.get("name") or "").strip()
 
-    def _is_strong_name_match(self, left: str, right: str) -> bool:
-        l = self._normalized_name_key(left)
-        r = self._normalized_name_key(right)
-        return bool(l and r and l == r)
-
-    def _is_weak_name_match(self, left: str, right: str) -> bool:
-        l = self._normalized_name_key(left)
-        r = self._normalized_name_key(right)
-        if not l or not r:
-            return False
-
-        l_tokens = {t for t in l.split() if len(t) > 2}
-        r_tokens = {t for t in r.split() if len(t) > 2}
-        if not l_tokens or not r_tokens:
-            return False
-
-        overlap = len(l_tokens & r_tokens)
-        baseline = min(len(l_tokens), len(r_tokens))
-        return (overlap / baseline) >= 0.6
-
     def _format_address(self, info: Dict[str, Any]) -> str:
         if not info:
             return ""
@@ -130,479 +134,441 @@ class AsyncCheckAnalysisContract:
             return str(direct).strip()
         return ""
 
-    def _address_matches(self, left: str, right: str) -> bool:
-        left_norm = re.sub(r"\s+", " ", (left or "").strip().lower()).strip(" ,.")
-        right_norm = re.sub(r"\s+", " ", (right or "").strip().lower()).strip(" ,.")
-        if not left_norm or not right_norm:
+    def _normalize_domain(self, value: Optional[str]) -> str:
+        if not value:
+            return ""
+        domain = str(value).strip().lower()
+        if "@" in domain:
+            domain = domain.split("@", 1)[1]
+        domain = re.sub(r"^(https?://|www\.)", "", domain, flags=re.IGNORECASE)
+        domain = domain.split("/", 1)[0].strip().strip(".")
+        return domain
+
+    def _domains_match(self, email_domain: str, company_domain: str) -> bool:
+        if not email_domain or not company_domain:
             return False
-        return (
-            left_norm == right_norm
-            or left_norm in right_norm
-            or right_norm in left_norm
-        )
+        if email_domain == company_domain:
+            return True
+        if email_domain.endswith("." + company_domain):
+            return True
+        if company_domain.endswith("." + email_domain):
+            return True
+        return False
 
-    async def check_contract_number(self):
-        self.score[0] = 10 if self.data.get("Contract Number") else 0
+    def _normalize_address_text(self, text: str) -> str:
+        cleaned = re.sub(r"[^\w\s]", " ", str(text or "").lower())
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned
 
-    async def check_company_number(self):
-        company_number = self._normalize_company_number(self.data.get("Company Number"))
-        if not company_number:
-            self.score[1] = 0
-            return
+    def _address_similarity(self, left: str, right: str) -> float:
+        left_norm = self._normalize_address_text(left)
+        right_norm = self._normalize_address_text(right)
+        if not left_norm or not right_norm:
+            return 0.0
 
-        self.data["Company Number"] = company_number
-        db_company = await get_company_by_number(company_number)
-        now = datetime.utcnow()
+        seq_ratio = difflib.SequenceMatcher(None, left_norm, right_norm).ratio()
 
-        if db_company and str(db_company.get("status", "")).lower() == "active":
-            last_updated = db_company.get("last_updated")
-            if isinstance(last_updated, datetime) and (now - last_updated) < timedelta(days=30):
-                self.db_company = db_company
-                self.score[1] = 30
-                return
-            self.db_company = db_company
+        left_tokens = set(left_norm.split())
+        right_tokens = set(right_norm.split())
+        if not left_tokens or not right_tokens:
+            token_ratio = 0.0
+        else:
+            token_ratio = len(left_tokens & right_tokens) / max(len(left_tokens), len(right_tokens))
 
+        return max(seq_ratio, token_ratio)
+
+    def _name_similarity(self, left: str, right: str) -> float:
+        l = self._normalized_name_key(left)
+        r = self._normalized_name_key(right)
+        if not l or not r:
+            return 0.0
+        return difflib.SequenceMatcher(None, l, r).ratio()
+
+    def _extract_emails(self, text: str) -> List[str]:
+        if not text:
+            return []
+        found = re.findall(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
+        seen = set()
+        emails = []
+        for email in found:
+            e = email.strip()
+            if e and e not in seen:
+                emails.append(e)
+                seen.add(e)
+        return emails
+
+    def _extract_phone_numbers(self, text: str) -> List[str]:
+        if not text:
+            return []
+        found = re.findall(r"\+?\d[\d\s().-]{7,}\d", text)
+        seen = set()
+        phones = []
+        for phone in found:
+            p = re.sub(r"\s+", " ", phone).strip()
+            if p and p not in seen:
+                phones.append(p)
+                seen.add(p)
+        return phones
+
+    def _parse_date(self, value: Any) -> Optional[date]:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _normalize_contract_text_for_hash(self, text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip())
+
+    async def _fetch_company_profile(self, company_number: str) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
         url = f"{self.base_url}/company/{company_number}"
         async with self.semaphore:
             try:
                 async with self.session.get(url) as resp:
                     if resp.status == 200:
-                        info = await resp.json()
-                        status = str(info.get("company_status", "")).lower()
-                        self.db_company = info
-                        self.score[1] = 30 if status == "active" else -10
-
-                        await add_company(
-                            {
-                                "name": info.get("company_name"),
-                                "company_number": company_number,
-                                "registered_address": self._format_address(info),
-                                "status": status or "unknown",
-                                "score": 0,
-                                "website_domain": self.data.get("Website Domain"),
-                                "contact_email": None,
-                                "phone_number": None,
-                            }
-                        )
-                    elif resp.status == 404:
-                        self.score[1] = -10
-                        if db_company:
-                            await delete_company_by_number(company_number)
-                    else:
-                        self.score[1] = 20 if db_company and str(db_company.get("status", "")).lower() == "active" else 0
+                        return await resp.json(), resp.status
+                    return None, resp.status
             except Exception as e:
-                self.logger.exception(f"Error checking company number {company_number}: {e}")
-                self.score[1] = 20 if db_company and str(db_company.get("status", "")).lower() == "active" else 0
+                self.logger.exception(f"Error checking company profile {company_number}: {e}")
+        return None, None
 
-    async def check_company_name(self):
-        company_name = self._normalize_company_name(self.data.get("Company Name"))
-        if not company_name:
-            self.score[2] = 0
-            return
-
-        self.data["Company Name"] = company_name
-        company_number = self.data.get("Company Number")
-
-        if self.db_company:
-            db_name = self._company_name_from_record(self.db_company)
-            if self._is_strong_name_match(company_name, db_name):
-                self.score[2] = 30
-            elif self._is_weak_name_match(company_name, db_name):
-                self.score[2] = 10
-            else:
-                self.score[2] = -20 if company_number else -10
-            return
-
-        db_companies = await get_companies_by_name(company_name)
-        active_db_companies = [
-            c for c in db_companies if str(c.get("status", "")).lower() == "active"
-        ]
-        if active_db_companies:
-            exact_db = next(
-                (
-                    c
-                    for c in active_db_companies
-                    if self._is_strong_name_match(company_name, self._company_name_from_record(c))
-                ),
-                None,
-            )
-            if exact_db:
-                self.db_company = exact_db
-                self.score[2] = 25
-            else:
-                self.score[2] = max(self.score[2], 10)
-
+    async def _search_company_by_name(self, company_name: str) -> Optional[List[Dict[str, Any]]]:
         url = f"{self.base_url}/search/companies"
         params = {"q": company_name}
-        try:
-            async with self.semaphore:
-                async with self.session.get(url, params=params) as resp:
-                    if resp.status != 200:
-                        return
-                    results = await resp.json()
-        except Exception as e:
-            self.logger.exception(f"Error searching company name {company_name}: {e}")
-            return
-
-        items = results.get("items", [])
-        active_items = [item for item in items if str(item.get("company_status", "")).lower() == "active"]
-        if not active_items:
-            if company_number and self.score[2] == 0:
-                self.score[2] = -10
-            return
-
-        exact_match = next(
-            (
-                i
-                for i in active_items
-                if self._is_strong_name_match(company_name, i.get("title", ""))
-            ),
-            None,
-        )
-        weak_match = next(
-            (
-                i
-                for i in active_items
-                if self._is_weak_name_match(company_name, i.get("title", ""))
-            ),
-            None,
-        )
-
-        if exact_match:
-            self.score[2] = max(self.score[2], 25)
-            number = exact_match.get("company_number")
-            if number:
-                profile_url = f"{self.base_url}/company/{number}"
-                try:
-                    async with self.semaphore:
-                        async with self.session.get(profile_url) as profile_resp:
-                            if profile_resp.status == 200:
-                                info = await profile_resp.json()
-                                self.db_company = info
-                                await add_company(
-                                    {
-                                        "name": info.get("company_name"),
-                                        "company_number": number,
-                                        "registered_address": self._format_address(info),
-                                        "status": str(info.get("company_status", "")).lower() or "unknown",
-                                        "score": 0,
-                                        "website_domain": self.data.get("Website Domain"),
-                                        "contact_email": None,
-                                        "phone_number": None,
-                                    }
-                                )
-                except Exception as e:
-                    self.logger.exception(f"Error loading company profile {number}: {e}")
-        elif weak_match:
-            self.score[2] = max(self.score[2], 10)
-        elif company_number and self.score[2] == 0:
-            self.score[2] = -10
-
-    async def check_registered_address(self):
-        addr = str(self.data.get("Registered Address") or "").strip()
-        if not addr:
-            self.score[3] = 0
-            return
-
-        db_addr = ""
-        if self.db_company:
-            db_addr = self._format_address(self.db_company)
-
-        if not db_addr and self.data.get("Company Number"):
-            url = f"{self.base_url}/company/{self.data.get('Company Number')}"
-            try:
-                async with self.semaphore:
-                    async with self.session.get(url) as resp:
-                        if resp.status == 200:
-                            info = await resp.json()
-                            db_addr = self._format_address(info)
-                            if not self.db_company:
-                                self.db_company = info
-            except Exception as e:
-                self.logger.exception(f"Error checking registered address: {e}")
-
-        if not db_addr:
-            self.score[3] = 0
-            return
-
-        if self._address_matches(addr, db_addr):
-            self.score[3] = 10
-        else:
-            self.score[3] = -10 if self.data.get("Company Number") else -5
-
-    async def check_contact_details(self):
-        contact = str(self.data.get("Contact Details") or "").strip()
-        if not contact:
-            self.score[4] = 0
-            return
-
-        emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", contact)
-        phones = re.findall(r"\+44\d{10}|\+44\s?\d{3}\s?\d{3}\s?\d{4}|0\d{10}", contact)
-
-        if not emails and not phones:
-            self.score[4] = -5
-            return
-
-        phone_score = 4 if any(self.is_valid_uk_phone(p) for p in phones) else 0
-        email_score = 0
-        company_lower = self._normalize_company_name(self.data.get("Company Name")).lower()
-        resp_lower = str(self.data.get("Responsible Person Full Name") or "").lower()
-
-        for email in emails:
-            domain = email.split("@")[1].lower()
-            mx_valid = await self._check_mx_records(domain)
-            if not mx_valid:
-                continue
-
-            candidate = 4
-            if company_lower and await self._check_domain_match(domain, company_lower):
-                candidate += 4
-
-            local_part = email.split("@")[0].lower()
-            if resp_lower and (local_part in resp_lower or any(w in local_part for w in resp_lower.split())):
-                candidate += 2
-
-            email_score = max(email_score, min(candidate, 10))
-
-        if emails and email_score == 0:
-            email_score = -2
-
-        self.score[4] = max(min(phone_score + email_score, 10), -5)
-
-    def is_valid_uk_phone(self, phone: str) -> bool:
-        cleaned = re.sub(r"\D", "", phone)
-        return (cleaned.startswith("44") and len(cleaned) == 12) or (cleaned.startswith("0") and len(cleaned) == 11)
-
-    async def _check_mx_records(self, domain: str) -> bool:
-        loop = asyncio.get_running_loop()
-        try:
-            records = await loop.run_in_executor(self.executor, dns.resolver.resolve, domain, "MX")
-            return len(records) > 0
-        except Exception:
-            return False
-
-    async def check_suspicious_phrases(self):
-        phrases = [
-            "urgent payment",
-            "no interview required",
-            "send money",
-            "confidential fee",
-            "suspicious link",
-            "payment before work",
-            "wire transfer",
-            "advance fee",
-        ]
-
-        structured_text = " ".join(str(v) for v in self.data.values() if v)
-        blob = f"{structured_text}\n{self.raw_contract_text}".lower()
-        self.score[5] = -20 if any(p in blob for p in phrases) else 0
-
-        suspicious = await check_suspicious_company(
-            company_number=self.data.get("Company Number"),
-            company_name=self.data.get("Company Name"),
-        )
-        if suspicious:
-            self.score[5] -= 25
-
-    async def check_text_style(self):
-        style = self.data.get("Text Style")
-        # Style is informative, but should not outweigh factual verification signals.
-        self.score[6] = 4 if style == "professional" else (0 if style == "template-like" else -8)
-
-    async def check_website_domain(self):
-        domain = str(self.data.get("Website Domain") or "").strip()
-        if not domain:
-            self.score[7] = 0
-            return
-
-        domain = re.sub(r"^(https?://|www\.)", "", domain, flags=re.IGNORECASE).strip("/")
-        if not re.match(r"^[a-z0-9.-]+\.[a-z]{2,}$", domain, flags=re.IGNORECASE):
-            self.score[7] = -5
-            return
-
-        exists = await self._check_domain_exists(domain)
-        if not exists:
-            self.score[7] = -5
-            return
-
-        company_lower = self._normalize_company_name(self.data.get("Company Name")).lower()
-        if company_lower:
-            match = await self._check_domain_match(domain, company_lower)
-            self.score[7] = 10 if match else -5
-        else:
-            self.score[7] = 5
-
-    async def _check_domain_exists(self, domain: str) -> bool:
-        for scheme in ["https", "http"]:
-            try:
-                async with self.session.get(f"{scheme}://{domain}", timeout=6, allow_redirects=True) as resp:
-                    if resp.status < 400:
-                        return True
-            except Exception:
-                continue
-        return False
-
-    async def _check_domain_match(self, domain: str, company: str) -> bool:
-        company_tokens = [w.lower() for w in re.split(r"\W+", company) if len(w) > 2]
-        common = {"limited", "ltd", "plc", "llp", "company", "group", "services"}
-        tokens = [w for w in company_tokens if w not in common]
-        if not tokens:
-            return False
-        domain_lower = domain.lower()
-        return any(token in domain_lower for token in tokens)
-
-    async def check_responsible_person(self):
-        name = str(self.data.get("Responsible Person Full Name") or "").strip()
-        if not name:
-            self.score[8] = 0
-            return
-
-        company_num = self._normalize_company_number(self.data.get("Company Number"))
-        if not company_num:
-            self.score[8] = 0
-            return
-
-        url = f"{self.base_url}/company/{company_num}/officers"
-        params = {"items_per_page": 100}
         async with self.semaphore:
             try:
                 async with self.session.get(url, params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        officers = data.get("items", [])
-                        name_lower = name.lower()
-                        active_match = any(
-                            name_lower in str(officer.get("name", "")).lower()
-                            and not officer.get("resigned_on")
-                            for officer in officers
-                        )
-                        self.score[8] = 10 if active_match else 0
-                    else:
-                        self.score[8] = 0
+                    if resp.status != 200:
+                        return None
+                    results = await resp.json()
+                    return results.get("items", []) or []
             except Exception as e:
-                self.logger.exception(f"Error checking responsible person: {e}")
-                self.score[8] = 0
+                self.logger.exception(f"Error searching company name {company_name}: {e}")
+        return None
 
-    async def check_contract_date(self):
-        date_str = str(self.data.get("Contract Date") or "").strip()
-        if not date_str:
-            self.score[9] = 0
+    def _apply_company_record(self, info: Dict[str, Any]) -> None:
+        self.db_company = info
+        self.official_company_name = self._company_name_from_record(info) or None
+        self.official_company_number = info.get("company_number") or self.data.get("Company Number")
+        self.company_status = str(info.get("status") or info.get("company_status") or "unknown").lower()
+        self.official_registered_address = self._format_address(info) or info.get("registered_address") or ""
+        self.incorporation_date = self._parse_date(info.get("incorporation_date") or info.get("date_of_creation"))
+
+    async def _cache_company_info(self, info: Dict[str, Any], company_number: Optional[str]) -> None:
+        await add_company(
+            {
+                "name": info.get("company_name") or info.get("name"),
+                "company_number": company_number or info.get("company_number"),
+                "registered_address": self._format_address(info) or info.get("registered_address"),
+                "status": str(info.get("company_status") or info.get("status") or "unknown").lower(),
+                "score": 0,
+                "website_domain": self.data.get("Website Domain"),
+                "contact_email": None,
+                "phone_number": None,
+                "incorporation_date": info.get("date_of_creation"),
+            }
+        )
+
+    async def verify_company(self) -> None:
+        self.company_verified = False
+        self.company_not_found = False
+        self.company_status = None
+        self.company_high_risk = False
+        self.company_lookup_failed = False
+        self.official_company_name = None
+        self.official_company_number = None
+        self.official_registered_address = ""
+        self.incorporation_date = None
+
+        company_number = self._normalize_company_number(self.data.get("Company Number"))
+        company_name = self._normalize_company_name(self.data.get("Company Name"))
+
+        if company_number:
+            self.data["Company Number"] = company_number
+            db_company = await get_company_by_number(company_number)
+            now = datetime.utcnow()
+            if db_company:
+                last_updated = db_company.get("last_updated")
+                if isinstance(last_updated, datetime) and (now - last_updated) < timedelta(days=30):
+                    self._apply_company_record(db_company)
+                    self.company_verified = self.company_status == "active"
+                    return
+                self._apply_company_record(db_company)
+
+            info, status_code = await self._fetch_company_profile(company_number)
+            if info:
+                self._apply_company_record(info)
+                await self._cache_company_info(info, company_number)
+            elif status_code == 404:
+                self.company_not_found = True
+                if db_company:
+                    await delete_company_by_number(company_number)
+            elif status_code is None:
+                if not db_company:
+                    self.company_lookup_failed = True
+            elif db_company:
+                self.company_not_found = False
+            else:
+                self.company_not_found = True
+
+            self.company_verified = self.company_status == "active"
             return
 
-        formats = [
-            "%Y-%m-%d",
-            "%d %B %Y",
-            "%d %b %Y",
-            "%B %d, %Y",
-            "%d/%m/%Y",
-            "%d-%m-%Y",
-            "%d.%m.%Y",
-        ]
-
-        parsed: Optional[datetime] = None
-        for fmt in formats:
-            try:
-                parsed = datetime.strptime(date_str, fmt)
-                break
-            except ValueError:
-                continue
-
-        if not parsed:
-            self.score[9] = 0
+        if not company_name:
+            self.company_not_found = True
             return
 
-        days_diff = (datetime.utcnow().date() - parsed.date()).days
-        if days_diff < -90:
-            self.score[9] = -10
-        elif days_diff < 0:
-            self.score[9] = 0
-        elif days_diff <= 180:
-            self.score[9] = 10
-        elif days_diff <= 3650:
-            self.score[9] = 5
+        self.data["Company Name"] = company_name
+
+        db_companies = await get_companies_by_name(company_name)
+        if db_companies:
+            active_db = [
+                c for c in db_companies if str(c.get("status", "")).lower() == "active"
+            ]
+            pick = active_db[0] if active_db else db_companies[0]
+            last_updated = pick.get("last_updated")
+            if isinstance(last_updated, datetime) and (datetime.utcnow() - last_updated) < timedelta(days=30):
+                self._apply_company_record(pick)
+                self.company_verified = self.company_status == "active"
+                return
+
+        items = await self._search_company_by_name(company_name)
+        if items is None:
+            self.company_lookup_failed = True
+            return
+        if not items:
+            self.company_not_found = True
+            return
+
+        best_item = None
+        best_score = 0.0
+        for item in items:
+            score = self._name_similarity(company_name, item.get("title", ""))
+            if score > best_score:
+                best_score = score
+                best_item = item
+
+        if not best_item or best_score < 0.7:
+            self.company_not_found = True
+            return
+
+        number = best_item.get("company_number")
+        info = None
+        if number:
+            info, status_code = await self._fetch_company_profile(number)
         else:
-            self.score[9] = -5
+            status_code = None
 
-    async def check_data_match(self):
-        if not self.db_company:
+        if info:
+            self._apply_company_record(info)
+            await self._cache_company_info(info, number)
+            if not self.data.get("Company Number") and number:
+                self.data["Company Number"] = number
+        else:
+            self.db_company = best_item
+            self.official_company_name = best_item.get("title") or company_name
+            self.official_company_number = number
+            self.company_status = str(best_item.get("company_status") or "unknown").lower()
+            self.official_registered_address = str(best_item.get("address_snippet") or "").strip()
+
+            await add_company(
+                {
+                    "name": self.official_company_name,
+                    "company_number": number,
+                    "registered_address": self.official_registered_address,
+                    "status": self.company_status,
+                    "score": 0,
+                    "website_domain": self.data.get("Website Domain"),
+                    "contact_email": None,
+                    "phone_number": None,
+                    "incorporation_date": None,
+                }
+            )
+
+        self.company_verified = self.company_status == "active"
+
+    async def check_manual_blacklist(self) -> None:
+        try:
+            suspicious = await check_suspicious_company(
+                company_number=self.data.get("Company Number"),
+                company_name=self.data.get("Company Name"),
+            )
+            if suspicious:
+                self.manual_blacklist = True
+                self.risk_flags.append("suspicious_company_listed")
+        except Exception as e:
+            self.logger.exception(f"Error checking suspicious companies list: {e}")
+
+    async def check_address_match(self) -> None:
+        self.address_match_score = None
+        self.address_match_ok = False
+        self.address_mismatch = False
+
+        contract_address = str(self.data.get("Registered Address") or "").strip()
+        official_address = str(self.official_registered_address or "").strip()
+        if not contract_address or not official_address:
             return
 
-        bonus = 0
-        company_number_present = bool(self.data.get("Company Number"))
-        extracted_name = self._normalize_company_name(self.data.get("Company Name"))
-        db_name = self._company_name_from_record(self.db_company)
+        similarity = self._address_similarity(contract_address, official_address)
+        score = int(round(similarity * 100))
+        self.address_match_score = score
+        if score >= 70:
+            self.address_match_ok = True
+        else:
+            self.address_mismatch = True
+            self.risk_flags.append("address_mismatch")
 
-        if extracted_name and db_name:
-            if self._is_strong_name_match(extracted_name, db_name):
-                bonus += 10
-            elif company_number_present and not self._is_weak_name_match(extracted_name, db_name):
-                bonus -= 20
+    async def check_email_domain(self) -> None:
+        self.email_domain = None
+        self.company_domain = None
+        self.domain_match = False
+        self.domain_mismatch = False
+        self.free_email_provider = False
 
-        extracted_addr = str(self.data.get("Registered Address") or "").strip()
-        db_addr = self._format_address(self.db_company)
-        if extracted_addr and db_addr:
-            if self._address_matches(extracted_addr, db_addr):
-                bonus += 10
-            elif company_number_present:
-                bonus -= 10
+        contact = str(self.data.get("Contact Details") or "").strip()
+        emails = self._extract_emails(contact)
+        if not emails:
+            emails = self._extract_emails(self.raw_contract_text)
 
-        self.score[1] = max(min(self.score[1] + bonus, 40), -20)
+        domains = [self._normalize_domain(e) for e in emails]
+        domains = [d for d in domains if d]
+        if domains:
+            self.email_domain = domains[0]
 
-    async def run_all_checks(self) -> List[int]:
-        await self.check_company_number()
-        await self.check_company_name()
+        self.company_domain = self._normalize_domain(self.data.get("Website Domain"))
 
-        tasks = [
-            self.check_contract_number(),
-            self.check_registered_address(),
-            self.check_contact_details(),
-            self.check_suspicious_phrases(),
-            self.check_text_style(),
-            self.check_website_domain(),
-            self.check_responsible_person(),
+        free_providers = {
+            "gmail.com",
+            "yahoo.com",
+            "outlook.com",
+            "hotmail.com",
+            "protonmail.com",
+        }
+
+        if any(d in free_providers for d in domains):
+            self.free_email_provider = True
+            self.risk_flags.append("free_email_provider")
+
+        if domains and self.company_domain:
+            if any(self._domains_match(d, self.company_domain) for d in domains):
+                self.domain_match = True
+            else:
+                self.domain_mismatch = True
+                self.risk_flags.append("domain_mismatch")
+
+    async def check_template_reuse(self) -> None:
+        self.template_hash = None
+        self.template_reuse = False
+
+        normalized = self._normalize_contract_text_for_hash(self.raw_contract_text)
+        if not normalized:
+            return
+
+        self.template_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        previous_names = await get_distinct_company_names_by_template(self.template_hash)
+        current_name = self._normalized_name_key(self.data.get("Company Name"))
+
+        if not current_name or not previous_names:
+            return
+
+        previous_norm = {self._normalized_name_key(n) for n in previous_names if n}
+        previous_norm = {n for n in previous_norm if n}
+        if previous_norm and any(n != current_name for n in previous_norm):
+            self.template_reuse = True
+            self.risk_flags.append("template_reuse")
+
+    async def check_contract_date(self) -> None:
+        self.contract_date_warning = False
+        raw_date = self.data.get("Contract Date")
+        parsed = self._parse_date(raw_date)
+        if not parsed:
+            return
+
+        today = datetime.utcnow().date()
+        if parsed > (today + timedelta(days=365)):
+            self.contract_date_warning = True
+            self.risk_flags.append("contract_date_too_future")
+        elif parsed < (today - timedelta(days=365 * 5)):
+            self.contract_date_warning = True
+            self.risk_flags.append("contract_date_too_old")
+
+    def _compute_total_score(self) -> int:
+        total = 0
+        if self.company_verified:
+            total += 40
+        if self.address_match_ok:
+            total += 20
+        if self.domain_match:
+            total += 10
+        if self.company_not_found:
+            total -= 50
+        if self.company_high_risk:
+            total -= 40
+        if self.domain_mismatch:
+            total -= 20
+        if self.free_email_provider:
+            total -= 15
+        if self.address_mismatch:
+            total -= 20
+        return max(0, min(100, total))
+
+    async def run_all_checks(self) -> None:
+        self.risk_flags = []
+        self.manual_blacklist = False
+
+        await self.verify_company()
+
+        status = (self.company_status or "").lower()
+        if status in {"dissolved", "liquidation"} or "liquidation" in status:
+            self.company_high_risk = True
+            self.risk_flags.append("company_dissolved")
+        elif self.company_not_found:
+            self.risk_flags.append("company_not_found")
+        elif self.company_lookup_failed:
+            self.risk_flags.append("company_lookup_failed")
+
+        await asyncio.gather(
+            self.check_address_match(),
+            self.check_email_domain(),
+            self.check_template_reuse(),
             self.check_contract_date(),
-        ]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await self.check_data_match()
-        return self.score
+            self.check_manual_blacklist(),
+        )
 
     async def calculate_total_score(self) -> Tuple[int, str]:
         await self.run_all_checks()
-        raw_total = sum(self.score)
-        total = max(0, min(100, raw_total))
+        total = self._compute_total_score()
 
-        company_number_present = bool(self._normalize_company_number(self.data.get("Company Number")))
-        company_number_verified = self.score[1] >= 25
-        strong_company_identity = self.score[2] >= 20
-        critical_mismatch = (
-            self.score[1] < 0
-            or self.score[2] < 0
-            or self.score[3] <= -10
-            or self.score[7] < 0
-        )
-
-        # Cap score if core identity verification is weak.
-        if not company_number_present:
-            total = min(total, 55)
-        elif not company_number_verified:
-            total = min(total, 65)
-        elif not strong_company_identity:
-            total = min(total, 70)
-
-        if self.score[5] <= -40:
+        if self.company_not_found or self.company_high_risk or self.manual_blacklist:
             status = "Unsafe"
-        elif critical_mismatch:
-            status = "Warning" if total >= 35 else "Unsafe"
-        elif total >= 75 and company_number_verified and strong_company_identity:
+        elif total >= 60:
             status = "Safe"
-        elif total >= 45:
+        elif total >= 30:
             status = "Warning"
         else:
             status = "Unsafe"
 
-        if self.score[5] <= -20 and status == "Safe":
+        if self.template_reuse and status == "Safe":
             status = "Warning"
-        if (not company_number_present or not company_number_verified or not strong_company_identity) and status == "Safe":
+        if self.contract_date_warning and status == "Safe":
+            status = "Warning"
+        if (
+            self.company_lookup_failed
+            and status == "Unsafe"
+            and not self.company_not_found
+            and not self.company_high_risk
+            and not self.manual_blacklist
+        ):
             status = "Warning"
 
         return total, status
@@ -612,17 +578,32 @@ class AsyncCheckAnalysisContract:
         return {
             "total_score": total,
             "status": status,
+            "company_verified": self.company_verified,
+            "company_status": self.company_status or "unknown",
+            "company_lookup_failed": self.company_lookup_failed,
+            "address_match_score": self.address_match_score,
+            "email_domain": self.email_domain,
+            "risk_flags": self.risk_flags,
+            "contract_template_hash": self.template_hash,
+            "template_reuse": self.template_reuse,
+            "contract_date_warning": self.contract_date_warning,
+            "official_company_name": self.official_company_name,
+            "official_company_number": self.official_company_number,
+            "official_registered_address": self.official_registered_address,
+            "incorporation_date": self.incorporation_date.isoformat() if self.incorporation_date else None,
             "detailed_scores": {
-                "Contract Number": self.score[0],
-                "Company Number": self.score[1],
-                "Company Name": self.score[2],
-                "Registered Address": self.score[3],
-                "Contact Details": self.score[4],
-                "Suspicious Phrases": self.score[5],
-                "Text Style": self.score[6],
-                "Website Domain": self.score[7],
-                "Responsible Person": self.score[8],
-                "Contract Date": self.score[9],
+                "Company Verified": self.company_verified,
+                "Company Status": self.company_status or "unknown",
+                "Company Lookup Failed": self.company_lookup_failed,
+                "Address Match Score": self.address_match_score,
+                "Email Domain": self.email_domain,
+                "Company Domain": self.company_domain,
+                "Domain Match": self.domain_match,
+                "Free Email Provider": self.free_email_provider,
+                "Template Hash": self.template_hash,
+                "Template Reuse": self.template_reuse,
+                "Contract Date Warning": self.contract_date_warning,
+                "Risk Flags": self.risk_flags,
             },
             "raw_data": self.data,
         }
