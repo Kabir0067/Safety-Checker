@@ -212,7 +212,7 @@ async def handle_help(message: types.Message) -> None:
             "📄 *Bot Capabilities:*\n"
             "🔹 Extracts key information (company name, number, address, contact details, dates)\n"
             "🔹 Verifies company data via *Companies House* 🏛️\n"
-            "🔹 Uses AI (Gemini API) to score safety and detect red flags 🛡️\n"
+            "🔹 Uses AI (Gemini API) to extract contract data and detect red flags 🛡️\n"
             "🔹 Stores your check history for later reference\n"
             "🔹 Accepts multiple file formats: .PDF, .DOCX, .XLSX, .CSV, .JPG, .PNG, .TXT\n\n"
 
@@ -305,7 +305,7 @@ async def handle_about(message: types.Message) -> None:
             "🔹 Paste contract text directly into the chat 💬\n"
             "🔹 AI-powered analysis — extracts key data, identifies suspicious wording, and evaluates structure 🤖\n"
             "🔹 Company verification via *Companies House* — validates status, address, and authenticity 🏢\n"
-            "🔹 Risk Scoring System: ✅ Safe | ⚠️ Needs Attention | 🚨 Risky\n"
+            "🔹 Verification Decisions: ✅ SAFE | ⚠️ WARNING | 🚨 HIGH_RISK\n"
             "🔹 Access your check history with /report 🗂️\n\n"
             "💡 *Tip:* text-based files (.PDF, .DOCX) process faster; images require OCR.\n\n"
             "🛡️ The bot uses a local database for high speed and reliability, minimizing dependence on external APIs.\n\n"
@@ -623,6 +623,40 @@ def _normalize_status_category(status_raw: Any) -> str:
     return "unknown"
 
 
+def _translate_reason(code: str, fallback: str, lang: str) -> str:
+    translations = {
+        "company_name_missing": "The contract does not clearly identify the employer company.",
+        "company_not_found": "The company was not found in the official registry.",
+        "company_not_active": "The company is not active in Companies House.",
+        "identity_low_confidence": "The identity confidence score is too low to trust this offer.",
+        "template_reuse": "This contract template was reused across different company names.",
+        "domain_mismatch": "The contact email domain does not match the company domain.",
+        "free_email_provider": "A free email provider is being used for employer contact.",
+        "address_mismatch": "The contract address does not match the official registered address.",
+        "missing_contact_details": "The contract is missing reliable contact details.",
+        "company_lookup_failed": "The official company lookup could not be completed.",
+        "contract_date_warning": "The contract date looks unusual.",
+        "known_suspicious_email_domain": "This email domain has appeared in previous suspicious checks.",
+        "known_suspicious_phone_number": "This phone number has appeared in previous suspicious checks.",
+        "known_suspicious_recruiter": "This recruiter name has appeared in previous suspicious checks.",
+        "known_suspicious_contract_template": "This contract hash has appeared in previous suspicious checks.",
+        "verified_identity": "The company was verified and no critical identity mismatches were found.",
+    }
+    return translations.get(code, fallback or code.replace("_", " ").capitalize())
+
+
+def _localized_reasons(detailed_report: Dict[str, Any], lang: str) -> List[str]:
+    codes = detailed_report.get("reason_codes") or []
+    reasons = detailed_report.get("reason") or []
+    localized = []
+    for idx, code in enumerate(codes):
+        fallback = reasons[idx] if idx < len(reasons) else ""
+        localized.append(_translate_reason(code, fallback, lang))
+    if localized:
+        return localized
+    return [str(reason) for reason in reasons if str(reason).strip()]
+
+
 def _summary_value(value: Any, max_len: int = 110) -> str:
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     if not text:
@@ -638,8 +672,7 @@ def _summary_value(value: Any, max_len: int = 110) -> str:
 def _build_pretty_summary(
     lang: str,
     file_type: str,
-    total_score: int,
-    status_raw: str,
+    detailed_report: Dict[str, Any],
     ai_result: Dict[str, Any],
 ) -> str:
     labels = {
@@ -661,18 +694,22 @@ def _build_pretty_summary(
         },
         'en': {
             'format': "📄 <b>Format:</b>",
-            'score': "⭐️ <b>Total score:</b>",
-            'status': "🛡️ <b>Status:</b>",
+            'score': "🧠 <b>Identity confidence:</b>",
+            'status': "🛡️ <b>Risk level:</b>",
             'company': "🏢 <b>Company:</b>",
             'company_number': "📇 <b>Company number:</b>",
-            'domain': "🌐 <b>Domain:</b>",
+            'domain': "🌐 <b>Company domain:</b>",
         },
     }
 
     status_icons = {'safe': "🟢", 'warning': "🟠", 'unsafe': "🔴", 'unknown': "⚪"}
-    status_text = {'safe': "Safe", 'warning': "Warning", 'unsafe': "Unsafe", 'unknown': "Unknown"}
+    status_text = {'safe': "SAFE", 'warning': "WARNING", 'unsafe': "HIGH_RISK", 'unknown': "UNKNOWN"}
 
     L = labels.get(lang, labels['en'])
+    total_score = detailed_report.get("identity_score", 0)
+    status_raw = detailed_report.get("risk_level")
+    reasons = _localized_reasons(detailed_report, lang)
+    explanation = str(detailed_report.get("explanation") or "").strip()
     category = _normalize_status_category(status_raw)
     icon = status_icons.get(category, status_icons['unknown'])
     status_label = status_text.get(category, status_text['unknown'])
@@ -682,10 +719,15 @@ def _build_pretty_summary(
         f"{L['score']} <b>{max(0, min(100, int(total_score or 0)))}</b>",
         f"{L['status']} {icon} <b>{status_label}</b>",
         "",
-        f"{L['company']} <code>{_summary_value(ai_result.get('Company Name'))}</code>",
-        f"{L['company_number']} <code>{_summary_value(ai_result.get('Company Number'), max_len=30)}</code>",
-        f"{L['domain']} <code>{_summary_value(ai_result.get('Website Domain'), max_len=80)}</code>",
+        f"{L['company']} <code>{_summary_value(detailed_report.get('official_company_name') or ai_result.get('Company Name'))}</code>",
+        f"{L['company_number']} <code>{_summary_value(detailed_report.get('official_company_number') or ai_result.get('Company Number'), max_len=30)}</code>",
+        f"{L['domain']} <code>{_summary_value(detailed_report.get('company_domain') or ai_result.get('Website Domain'), max_len=80)}</code>",
     ]
+    if explanation:
+        lines.extend(["", f"📝 <b>Summary:</b>", html.escape(explanation)])
+    if reasons:
+        lines.extend(["", f"⚠️ <b>Reasons:</b>"])
+        lines.extend(f"• {html.escape(reason)}" for reason in reasons[:6])
     return "\n".join(lines)
 
 async def process_file(file: types.Document):
@@ -1105,8 +1147,8 @@ async def process_contract_text(
             await bot.send_message(message.chat.id, verify_timeout.get(user_lang, verify_timeout['en']))
             return
 
-        total_score = detailed_report.get("total_score", 0)
-        status = detailed_report.get("status", "unknown")
+        identity_score = detailed_report.get("identity_score", detailed_report.get("total_score", 0))
+        risk_level = detailed_report.get("risk_level", detailed_report.get("status", "unknown"))
 
         try:
             user_row = await get_user_by_telegram_id(user_id)
@@ -1130,7 +1172,7 @@ async def process_contract_text(
                         'company_number': official_number,
                         'registered_address': detailed_report.get("official_registered_address") or ai_result.get('Registered Address'),
                         'status': company_status,
-                        'score': total_score,
+                        'score': identity_score,
                         'website_domain': ai_result.get('Website Domain'),
                         'contact_email': None,
                         'phone_number': None,
@@ -1143,7 +1185,7 @@ async def process_contract_text(
                     'company_number': None,
                     'registered_address': ai_result.get('Registered Address'),
                     'status': None,
-                    'score': total_score,
+                    'score': identity_score,
                     'website_domain': ai_result.get('Website Domain'),
                     'contact_email': None,
                     'phone_number': None,
@@ -1179,20 +1221,24 @@ async def process_contract_text(
                 'extracted_address': ai_result.get('Registered Address'),
                 'website_domain': ai_result.get('Website Domain'),
                 'contract_template_hash': detailed_report.get('contract_template_hash'),
-                'total_score': total_score,
-                'safety_rating': status,
+                'total_score': identity_score,
+                'safety_rating': risk_level,
                 'detailed_scores': detailed_report.get('detailed_scores', {})
             })
         except Exception as e:
             print(f"add_user_check error: {e}")
 
         try:
-            risk_flags = detailed_report.get('risk_flags') or []
             contact_details = str(ai_result.get('Contact Details') or "")
             phone_match = re.findall(r"\+?\d[\d\s().-]{7,}\d", contact_details)
-            phone_number = phone_match[0].strip() if phone_match else None
+            if phone_match:
+                raw_phone = phone_match[0].strip()
+                digits = re.sub(r"\D", "", raw_phone)
+                phone_number = f"+{digits}" if raw_phone.startswith("+") else digits
+            else:
+                phone_number = None
             recruiter_name = ai_result.get('Responsible Person Full Name')
-            if risk_flags and any([detailed_report.get('email_domain'), phone_number, recruiter_name, detailed_report.get('contract_template_hash')]):
+            if risk_level != "SAFE" and any([detailed_report.get('email_domain'), phone_number, recruiter_name, detailed_report.get('contract_template_hash')]):
                 await add_suspicious_entity({
                     'email_domain': detailed_report.get('email_domain'),
                     'phone_number': phone_number,
@@ -1206,8 +1252,7 @@ async def process_contract_text(
         pretty_summary = _build_pretty_summary(
             lang=user_lang,
             file_type=file_type,
-            total_score=total_score,
-            status_raw=status,
+            detailed_report=detailed_report,
             ai_result=ai_result,
         )
 
@@ -1296,7 +1341,7 @@ def _localize_safety(safety_raw: str, lang: str):
         cat = "safe"
     elif any(k in s for k in ["warn", "треб", "эҳтиёт", "warning"]):
         cat = "warning"
-    elif any(k in s for k in ["unsafe", "подоз", "хатар", "risk", "риск"]):
+    elif any(k in s for k in ["high_risk", "high risk", "unsafe", "подоз", "хатар", "risk", "риск"]):
         cat = "unsafe"
     else:
         cat = "unknown"
@@ -1317,7 +1362,7 @@ def _localize_safety(safety_raw: str, lang: str):
         'en': {
             'safe': ("🟢 🛡️", "Safe — Reliable"),
             'warning': ("🟡 ⚠️", "Needs Attention"),
-            'unsafe': ("🔴 🚨", "Risky — Suspicious"),
+            'unsafe': ("🔴 🚨", "HIGH_RISK"),
             'unknown': ("⚪ ℹ️", "Unknown")
         }
     }
@@ -1396,12 +1441,12 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
             'title': f"{icon} <b>Check Details №{page+1} of {total_pages}</b>",
             'company': "🏢 <b>Company:</b>",
             'date': "📅 <b>Check Date:</b>",
-            'score': "⭐ <b>Score:</b>",
-            'safety': "🛡️ <b>Safety:</b>",
+            'score': "🧠 <b>Identity confidence:</b>",
+            'safety': "🛡️ <b>Risk level:</b>",
             'contract_number': "📄 <b>Contract Number:</b>",
             'contract_date': "📋 <b>Contract Date:</b>",
             'website': "🌐 <b>Website:</b>",
-            'detailed_scores': "<b>Detailed Scores</b>",
+            'detailed_scores': "<b>Verification Details</b>",
             'no_value': "—"
         }
     }
@@ -1413,7 +1458,7 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
         "",
         f"{L['company']} <code>{company_name}</code>",
         f"{L['date']} {check_date}",
-        f"{L['score']} {_score_bar(total_score, length=10)}",
+        f"{L['score']} <b>{total_score}/100</b>",
         f"{L['safety']} {icon} <b>{localized_safety_label}</b>",
     ]
 
@@ -1441,16 +1486,28 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
 
 
     new_categories = [
-        ('Company Verified', {'ru': 'Компания подтверждена', 'tj': 'Ширкат тасдиқ шуд', 'en': 'Company Verified'}),
-        ('Company Status', {'ru': 'Статус компании', 'tj': 'Ҳолати ширкат', 'en': 'Company Status'}),
-        ('Address Match Score', {'ru': 'Совпадение адреса', 'tj': 'Мутобиқати суроға', 'en': 'Address Match Score'}),
-        ('Email Domain', {'ru': 'Домен email', 'tj': 'Домени email', 'en': 'Email Domain'}),
-        ('Company Domain', {'ru': 'Домен компании', 'tj': 'Домени ширкат', 'en': 'Company Domain'}),
-        ('Domain Match', {'ru': 'Совпадение домена', 'tj': 'Мутобиқати домен', 'en': 'Domain Match'}),
-        ('Free Email Provider', {'ru': 'Бесплатный email-провайдер', 'tj': 'Провайдери email-и ройгон', 'en': 'Free Email Provider'}),
-        ('Template Reuse', {'ru': 'Повтор шаблона', 'tj': 'Такрори қолаб', 'en': 'Template Reuse'}),
-        ('Contract Date Warning', {'ru': 'Предупреждение по дате договора', 'tj': 'Огоҳӣ оид ба санаи шартнома', 'en': 'Contract Date Warning'}),
-        ('Risk Flags', {'ru': 'Флаги риска', 'tj': 'Нишонаҳои хатар', 'en': 'Risk Flags'})
+        ('Risk Level', {'ru': 'Risk Level', 'tj': 'Risk Level', 'en': 'Risk Level'}),
+        ('Identity Confidence Score', {'ru': 'Identity Confidence', 'tj': 'Identity Confidence', 'en': 'Identity Confidence'}),
+        ('Company Verified', {'ru': 'Company Verified', 'tj': 'Company Verified', 'en': 'Company Verified'}),
+        ('Company Name Present', {'ru': 'Company Name Present', 'tj': 'Company Name Present', 'en': 'Company Name Present'}),
+        ('Company Status', {'ru': 'Company Status', 'tj': 'Company Status', 'en': 'Company Status'}),
+        ('Official Company Name', {'ru': 'Official Company Name', 'tj': 'Official Company Name', 'en': 'Official Company Name'}),
+        ('Official Company Number', {'ru': 'Official Company Number', 'tj': 'Official Company Number', 'en': 'Official Company Number'}),
+        ('Official Registered Address', {'ru': 'Official Registered Address', 'tj': 'Official Registered Address', 'en': 'Official Registered Address'}),
+        ('Address Match', {'ru': 'Address Match', 'tj': 'Address Match', 'en': 'Address Match'}),
+        ('Address Similarity', {'ru': 'Address Similarity', 'tj': 'Address Similarity', 'en': 'Address Similarity'}),
+        ('Email Domain', {'ru': 'Email Domain', 'tj': 'Email Domain', 'en': 'Email Domain'}),
+        ('Company Domain', {'ru': 'Company Domain', 'tj': 'Company Domain', 'en': 'Company Domain'}),
+        ('Domain Match', {'ru': 'Domain Match', 'tj': 'Domain Match', 'en': 'Domain Match'}),
+        ('Free Email Provider', {'ru': 'Free Email Provider', 'tj': 'Free Email Provider', 'en': 'Free Email Provider'}),
+        ('Missing Contact Details', {'ru': 'Missing Contact Details', 'tj': 'Missing Contact Details', 'en': 'Missing Contact Details'}),
+        ('Template Reuse', {'ru': 'Template Reuse', 'tj': 'Template Reuse', 'en': 'Template Reuse'}),
+        ('Suspicious Identity Match', {'ru': 'Suspicious Identity Match', 'tj': 'Suspicious Identity Match', 'en': 'Suspicious Identity Match'}),
+        ('Suspicious Identity Fields', {'ru': 'Suspicious Identity Fields', 'tj': 'Suspicious Identity Fields', 'en': 'Suspicious Identity Fields'}),
+        ('Contract Date Warning', {'ru': 'Contract Date Warning', 'tj': 'Contract Date Warning', 'en': 'Contract Date Warning'}),
+        ('Reasons', {'ru': 'Reasons', 'tj': 'Reasons', 'en': 'Reasons'}),
+        ('Explanation', {'ru': 'Explanation', 'tj': 'Explanation', 'en': 'Explanation'}),
+        ('Risk Flags', {'ru': 'Risk Flags', 'tj': 'Risk Flags', 'en': 'Risk Flags'})
     ]
 
     legacy_categories = [

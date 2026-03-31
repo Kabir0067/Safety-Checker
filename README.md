@@ -1,7 +1,7 @@
 ﻿21 commit
 # Contract Safety Checker
 
-Contract Safety Checker is a Telegram bot + admin panel that analyzes employment contracts, verifies company identity, and returns a safety score (`Safe`, `Warning`, `Unsafe`).
+Contract Safety Checker is a Telegram bot + admin panel that analyzes employment contracts, verifies company identity, and returns a verification-based decision (`SAFE`, `WARNING`, `HIGH_RISK`).
 
 This repository is suitable for both:
 - a real prototype for contract pre-screening;
@@ -14,7 +14,7 @@ This repository is suitable for both:
 3. Uses AI to extract structured contract fields.
 4. Verifies company data via Companies House (number or name) + local cache.
 5. Checks status, address match, email/domain signals, and template reuse.
-6. Calculates risk score with rule-based checks and overrides.
+6. Calculates identity confidence from verified signals and applies decision rules.
 7. Saves results in SQLite and shows history/report in Telegram.
 
 ## 2) Core features
@@ -25,7 +25,7 @@ This repository is suitable for both:
 - Companies House verification (number/name, status, address match)
 - Email/domain validation (free providers + mismatch detection)
 - Contract template hashing and reuse detection
-- Risk scoring model with override rules
+- Verification-first risk engine with rule-based decisions
 - Local data store (SQLite via SQLAlchemy)
 - Telegram interface in 3 languages (`ru`, `tj`, `en`)
 - Django admin panel for database monitoring
@@ -185,32 +185,40 @@ After launch, admin URLs are printed in console.
 - `/feedback` - send feedback email
 - `/buttons` - show inline main menu
 
-## 9) Scoring model (summary)
+## 9) Verification model (summary)
 
-The system uses a risk-based model and clamps total score to `0..100`, with override rules for critical risks.
+The system now follows a verification-first pipeline:
 
-Positive signals:
-- `+40` verified company (Companies House active)
+1. Extract only the key contract fields needed for verification.
+2. Verify the employer via Companies House using company number first, otherwise company name.
+3. Compare the contract address against the official registered address.
+4. Check whether the contact email domain matches the known company domain and flag free email providers.
+5. Detect reused templates and repeated suspicious identities (email domain, phone number, recruiter name, contract hash).
+6. Calculate an internal `identity_score` from verified identity signals only.
+7. Apply decision rules to return `SAFE`, `WARNING`, or `HIGH_RISK`.
+
+Identity confidence:
+- `+50` verified active company
 - `+20` address match (`>=70%` similarity)
-- `+10` domain match (email domain vs company domain)
+- `+20` domain match
+- `-20` free email provider
 
-Negative signals:
-- `-50` company not found
-- `-40` company dissolved/liquidation
-- `-20` domain mismatch
-- `-15` free email provider
-- `-20` address mismatch
+Hard risk rules:
+- missing company name -> `HIGH_RISK`
+- company not found in official registry -> `HIGH_RISK`
+- dissolved or liquidation status -> `HIGH_RISK`
+- identity confidence below `30` -> `HIGH_RISK`
 
-Overrides and warnings:
-- If company is not found or dissolved/liquidation -> `Unsafe`
-- Manual blacklist hit -> `Unsafe`
-- Template reuse across different company names -> downgrade `Safe` to `Warning`
-- Contract date > 1 year in future or older than 5 years -> warning
+Warning rules:
+- domain mismatch
+- address mismatch
+- missing contact details
+- suspicious identity reuse
+- template reuse across companies
+- unusual contract date
 
-Final categories:
-- `Safe`
-- `Warning`
-- `Unsafe`
+Safe rule:
+- no critical flags and identity confidence `>= 70`
 
 ## 10) Data and security
 
@@ -255,7 +263,7 @@ Test `/check` with:
 ## 13) Current status and next improvements
 
 Current state:
-- Core flow is working: input -> extraction -> verification -> score -> report history.
+- Core flow is working: input -> extraction -> verification -> decision -> report history.
 
 Recommended roadmap:
 - Add automated tests for scoring and parsers.

@@ -2,7 +2,7 @@ from database.models import User, Company, UserCheck, SuspiciousCompany, Suspici
 from database.connection import AsyncSessionLocal
 from typing import Optional, List, Dict, Any
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import select, func, case, delete, and_
+from sqlalchemy import select, func, case, delete, and_, or_
 from datetime import datetime, date
 import zipfile
 import csv
@@ -313,13 +313,28 @@ async def add_suspicious_company(data: Dict[str, Any]) -> Optional[int]:
 async def add_suspicious_entity(data: Dict[str, Any]) -> Optional[int]:
     async with AsyncSessionLocal() as session:
         try:
-            entity = SuspiciousEntity(
-                email_domain=_clean_optional_string(data.get("email_domain")),
-                phone_number=_clean_optional_string(data.get("phone_number")),
-                recruiter_name=_clean_optional_string(data.get("recruiter_name")),
-                contract_template_hash=_clean_optional_string(data.get("contract_template_hash")),
-                source=_clean_optional_string(data.get("source")),
-            )
+            normalized_data = {
+                "email_domain": _clean_optional_string(data.get("email_domain")),
+                "phone_number": _clean_optional_string(data.get("phone_number")),
+                "recruiter_name": _clean_optional_string(data.get("recruiter_name")),
+                "contract_template_hash": _clean_optional_string(data.get("contract_template_hash")),
+                "source": _clean_optional_string(data.get("source")),
+            }
+
+            dedupe_filters = [
+                getattr(SuspiciousEntity, key) == value
+                for key, value in normalized_data.items()
+                if value is not None and key != "source"
+            ]
+            existing = None
+            if dedupe_filters:
+                existing = await session.scalar(
+                    select(SuspiciousEntity).where(and_(*dedupe_filters))
+                )
+            if existing:
+                return existing.id
+
+            entity = SuspiciousEntity(**normalized_data)
             session.add(entity)
             await session.commit()
             await session.refresh(entity)
@@ -328,6 +343,54 @@ async def add_suspicious_entity(data: Dict[str, Any]) -> Optional[int]:
             await session.rollback()
             print(f"Error adding suspicious entity: {e}")
             return None
+
+
+async def find_suspicious_entity_matches(
+    email_domain: str = None,
+    phone_number: str = None,
+    recruiter_name: str = None,
+    contract_template_hash: str = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    async with AsyncSessionLocal() as session:
+        try:
+            filters = []
+            if email_domain:
+                filters.append(func.lower(SuspiciousEntity.email_domain) == email_domain.lower())
+            if phone_number:
+                filters.append(SuspiciousEntity.phone_number == phone_number)
+            if recruiter_name:
+                filters.append(func.lower(SuspiciousEntity.recruiter_name) == recruiter_name.lower())
+            if contract_template_hash:
+                filters.append(SuspiciousEntity.contract_template_hash == contract_template_hash)
+
+            if not filters:
+                return []
+
+            stmt = (
+                select(SuspiciousEntity)
+                .where(or_(*filters))
+                .order_by(SuspiciousEntity.created_at.desc())
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            matches = []
+            for entity in result.scalars().all():
+                matches.append(
+                    {
+                        "id": entity.id,
+                        "email_domain": entity.email_domain,
+                        "phone_number": entity.phone_number,
+                        "recruiter_name": entity.recruiter_name,
+                        "contract_template_hash": entity.contract_template_hash,
+                        "source": entity.source,
+                        "created_at": entity.created_at,
+                    }
+                )
+            return matches
+        except SQLAlchemyError as e:
+            print(f"Error finding suspicious entity matches: {e}")
+            return []
 
 
 async def check_suspicious_company(company_number: str = None, company_name: str = None) -> Optional[Dict]:
