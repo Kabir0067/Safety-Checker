@@ -3,7 +3,7 @@ from database.connection import AsyncSessionLocal
 from typing import Optional, List, Dict, Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select, func, case, delete, and_, or_
-from datetime import datetime, date
+from datetime import UTC, datetime, date
 import zipfile
 import csv
 import os
@@ -100,7 +100,7 @@ async def add_company(data: Dict[str, Any]) -> Optional[int]:
         "contact_email": _clean_optional_string(data.get("contact_email")),
         "phone_number": _clean_optional_string(data.get("phone_number")),
         "incorporation_date": _clean_optional_date(data.get("incorporation_date")),
-        "last_updated": datetime.utcnow(),
+        "last_updated": datetime.now(UTC),
     }
 
     async with AsyncSessionLocal() as session:

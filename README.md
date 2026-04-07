@@ -189,36 +189,37 @@ After launch, admin URLs are printed in console.
 
 The system now follows a verification-first pipeline:
 
-1. Extract only the key contract fields needed for verification.
+1. Extract the core contract identity fields needed for verification.
 2. Verify the employer via Companies House using company number first, otherwise company name.
-3. Compare the contract address against the official registered address.
-4. Check whether the contact email domain matches the known company domain and flag free email providers.
-5. Detect reused templates and repeated suspicious identities (email domain, phone number, recruiter name, contract hash).
-6. Calculate an internal `identity_score` from verified identity signals only.
-7. Apply decision rules to return `SAFE`, `WARNING`, or `HIGH_RISK`.
+3. Enforce UK-only validation and compare the contract company name against the official record with a strict `>= 90%` similarity threshold.
+4. Compare the contract address against the official registered address.
+5. Check whether the contact email domain matches the known company domain and flag free email providers.
+6. Calculate a light `identity_score` for confidence display only.
+7. Always return a structured result with `SAFE`, `WARNING`, or `HIGH_RISK` plus explanation and key issues.
 
 Identity confidence:
 - `+50` verified active company
 - `+20` address match (`>=70%` similarity)
 - `+20` domain match
 - `-20` free email provider
+- `-20` domain mismatch
 
 Hard risk rules:
 - missing company name -> `HIGH_RISK`
-- company not found in official registry -> `HIGH_RISK`
+- company not found in UK registry -> `HIGH_RISK`
+- company is not UK-registered -> `HIGH_RISK`
+- company name does not closely match official records -> `HIGH_RISK`
 - dissolved or liquidation status -> `HIGH_RISK`
-- identity confidence below `30` -> `HIGH_RISK`
 
 Warning rules:
 - domain mismatch
 - address mismatch
-- missing contact details
-- suspicious identity reuse
-- template reuse across companies
-- unusual contract date
+- free email provider
+- missing employer email and address
+- company lookup failure
 
 Safe rule:
-- no critical flags and identity confidence `>= 70`
+- company verified and no major warning flags
 
 ## 10) Data and security
 
@@ -233,6 +234,7 @@ Quick checks:
 
 ```bash
 python -m py_compile main.py
+python -m unittest tests.test_verification_logic -v
 ```
 
 Then run:

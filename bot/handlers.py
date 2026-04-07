@@ -518,14 +518,14 @@ async def receive_feedback(message: types.Message) -> None:
     email_msg = EmailMessage()
     email_msg["From"] = os.getenv("SMTP_USER")
     email_msg["To"] = os.getenv("FEEDBACK_EMAIL")
-    email_msg["Subject"] = f"Feedback from {user_id} ({lang}) - {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+    email_msg["Subject"] = f"Feedback from {user_id} ({lang}) - {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}"
     email_body = (
         f"User ID: {user_id}\n"
         f"Username: {message.from_user.username or 'N/A'}\n"
         f"First Name: {message.from_user.first_name or 'N/A'}\n"
         f"Language: {lang}\n\n"
         f"Feedback:\n{text}\n\n"
-        f"Time (UTC): {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"Time (UTC): {datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M:%S')}"
     )
     email_msg.set_content(email_body)
 
@@ -625,15 +625,16 @@ def _normalize_status_category(status_raw: Any) -> str:
 
 def _translate_reason(code: str, fallback: str, lang: str) -> str:
     translations = {
-        "company_name_missing": "The contract does not clearly identify the employer company.",
-        "company_not_found": "The company was not found in the official registry.",
-        "company_not_active": "The company is not active in Companies House.",
-        "identity_low_confidence": "The identity confidence score is too low to trust this offer.",
+        "company_name_missing": "No company name was found in the contract.",
+        "company_not_found": "The company was not found in the UK registry.",
+        "company_not_uk": "The company is not registered in the UK.",
+        "company_name_mismatch": "The company name does not match official UK records.",
+        "company_not_active": "The company is not active in the UK registry.",
         "template_reuse": "This contract template was reused across different company names.",
         "domain_mismatch": "The contact email domain does not match the company domain.",
         "free_email_provider": "A free email provider is being used for employer contact.",
         "address_mismatch": "The contract address does not match the official registered address.",
-        "missing_contact_details": "The contract is missing reliable contact details.",
+        "low_identity_data": "The contract is missing both an employer email and an address.",
         "company_lookup_failed": "The official company lookup could not be completed.",
         "contract_date_warning": "The contract date looks unusual.",
         "known_suspicious_email_domain": "This email domain has appeared in previous suspicious checks.",
@@ -1490,16 +1491,22 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
         ('Identity Confidence Score', {'ru': 'Identity Confidence', 'tj': 'Identity Confidence', 'en': 'Identity Confidence'}),
         ('Company Verified', {'ru': 'Company Verified', 'tj': 'Company Verified', 'en': 'Company Verified'}),
         ('Company Name Present', {'ru': 'Company Name Present', 'tj': 'Company Name Present', 'en': 'Company Name Present'}),
+        ('Company UK Match', {'ru': 'Company UK Match', 'tj': 'Company UK Match', 'en': 'Company UK Match'}),
+        ('Company Name Matches Official Record', {'ru': 'Company Name Matches Official Record', 'tj': 'Company Name Matches Official Record', 'en': 'Company Name Matches Official Record'}),
+        ('Company Name Similarity', {'ru': 'Company Name Similarity', 'tj': 'Company Name Similarity', 'en': 'Company Name Similarity'}),
         ('Company Status', {'ru': 'Company Status', 'tj': 'Company Status', 'en': 'Company Status'}),
         ('Official Company Name', {'ru': 'Official Company Name', 'tj': 'Official Company Name', 'en': 'Official Company Name'}),
         ('Official Company Number', {'ru': 'Official Company Number', 'tj': 'Official Company Number', 'en': 'Official Company Number'}),
         ('Official Registered Address', {'ru': 'Official Registered Address', 'tj': 'Official Registered Address', 'en': 'Official Registered Address'}),
+        ('Official Country', {'ru': 'Official Country', 'tj': 'Official Country', 'en': 'Official Country'}),
+        ('Official Jurisdiction', {'ru': 'Official Jurisdiction', 'tj': 'Official Jurisdiction', 'en': 'Official Jurisdiction'}),
         ('Address Match', {'ru': 'Address Match', 'tj': 'Address Match', 'en': 'Address Match'}),
         ('Address Similarity', {'ru': 'Address Similarity', 'tj': 'Address Similarity', 'en': 'Address Similarity'}),
         ('Email Domain', {'ru': 'Email Domain', 'tj': 'Email Domain', 'en': 'Email Domain'}),
         ('Company Domain', {'ru': 'Company Domain', 'tj': 'Company Domain', 'en': 'Company Domain'}),
         ('Domain Match', {'ru': 'Domain Match', 'tj': 'Domain Match', 'en': 'Domain Match'}),
         ('Free Email Provider', {'ru': 'Free Email Provider', 'tj': 'Free Email Provider', 'en': 'Free Email Provider'}),
+        ('Low Identity Data', {'ru': 'Low Identity Data', 'tj': 'Low Identity Data', 'en': 'Low Identity Data'}),
         ('Missing Contact Details', {'ru': 'Missing Contact Details', 'tj': 'Missing Contact Details', 'en': 'Missing Contact Details'}),
         ('Template Reuse', {'ru': 'Template Reuse', 'tj': 'Template Reuse', 'en': 'Template Reuse'}),
         ('Suspicious Identity Match', {'ru': 'Suspicious Identity Match', 'tj': 'Suspicious Identity Match', 'en': 'Suspicious Identity Match'}),
