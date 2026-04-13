@@ -17,10 +17,42 @@ DEFAULT_ADMIN_USER = "admin_checker"
 DEFAULT_ADMIN_PASS = "111222"
 DEFAULT_ADMIN_EMAIL = "admin@example.com"
 DEFAULT_TZ = "Asia/Dushanbe"
+RUNTIME_DIRS = [
+    ROOT / "database",
+    ROOT / "logs",
+    ROOT / "files",
+    ROOT / "tmp",
+    ROOT / "tmp" / "processed",
+    ROOT / "tmp" / "debug",
+]
 
 
 def python_exe() -> str:
     return sys.executable or ("python.exe" if os.name == "nt" else "python3")
+
+
+def maybe_reexec_from_venv() -> None:
+    if os.getenv("SAFETY_CHECKER_NO_VENV_REEXEC") == "1":
+        return
+    if getattr(sys, "base_prefix", sys.prefix) != sys.prefix:
+        return
+
+    venv_python = ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if not venv_python.exists():
+        return
+
+    current = Path(sys.executable).resolve() if sys.executable else None
+    target = venv_python.resolve()
+    if current == target:
+        return
+
+    print(f"[BOOT] Re-starting with project virtualenv: {target}")
+    os.execv(str(target), [str(target), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+def ensure_runtime_dirs() -> None:
+    for path in RUNTIME_DIRS:
+        path.mkdir(parents=True, exist_ok=True)
 
 
 def pick_free_port(start: int) -> int:
@@ -129,7 +161,7 @@ def run_database_migrate_or_exit() -> None:
         print(f"[MIGRATE] ERROR: {migrate_path} not found")
         raise SystemExit(1)
 
-    print("[MIGRATE] Running database migration (SQLAlchemy models)...")
+    print("[MIGRATE] Ensuring SQLite database, tables and model columns...")
     result = subprocess.run([python_exe(), str(migrate_path)], cwd=str(ROOT))
     if result.returncode != 0:
         print(f"[MIGRATE] FAILED with code {result.returncode}")
@@ -262,6 +294,7 @@ async def run_bot_forever() -> None:
 
 async def main() -> None:
     load_dotenv()
+    ensure_runtime_dirs()
 
     os.environ.setdefault("TZ", os.getenv("DJANGO_TIME_ZONE", DEFAULT_TZ))
     if hasattr(time, "tzset"):
@@ -330,8 +363,15 @@ async def main() -> None:
             bot_task.cancel()
             try:
                 await bot_task
-            except Exception:
+            except BaseException:
                 pass
+
+        # Close shared aiohttp session used by AI processing.
+        try:
+            from functions.ai_processing import AsyncAiProcessing
+            await AsyncAiProcessing.aclose()
+        except Exception:
+            pass
 
         stop_process(admin_proc)
         try:
@@ -343,4 +383,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        maybe_reexec_from_venv()
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Clean manual stop (Ctrl+C) without noisy traceback.
+        print("\n[SYS] Stopped by user (Ctrl+C).")

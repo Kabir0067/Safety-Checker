@@ -98,6 +98,7 @@ class AsyncCheckAnalysisContract:
         self.address_match_score: Optional[int] = None
         self.address_match_ok = False
         self.address_mismatch = False
+        self.address_missing = False
 
         self.email_domains: List[str] = []
         self.email_domain: Optional[str] = None
@@ -105,12 +106,15 @@ class AsyncCheckAnalysisContract:
         self.domain_match = False
         self.domain_mismatch = False
         self.free_email_provider = False
+        self.email_missing = False
         self.low_identity_data = False
         self.missing_contact_details = False
 
         self.template_hash: Optional[str] = None
         self.template_reuse = False
         self.contract_date_warning = False
+        self.suspicious_phrases_found = False
+        self.suspicious_phrases: List[str] = []
 
         self.suspicious_identity_match = False
         self.suspicious_identity_fields: List[str] = []
@@ -145,6 +149,17 @@ class AsyncCheckAnalysisContract:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session and not self.session.closed:
             await self.session.close()
+
+    async def _ensure_session(self) -> None:
+        """Make class resilient even when used without `async with`."""
+        if self.session and not self.session.closed:
+            return
+        auth = BasicAuth(login=self.api_key, password="") if self.api_key else None
+        self.session = aiohttp.ClientSession(
+            auth=auth,
+            timeout=ClientTimeout(total=15),
+            headers={"User-Agent": "ContractChecker/2.0"},
+        )
 
     def _flag(self, code: str) -> None:
         if code and code not in self.risk_flags:
@@ -226,6 +241,20 @@ class AsyncCheckAnalysisContract:
         value = info.get("jurisdiction")
         return str(value).strip() if value else ""
 
+    def _country_from_jurisdiction(self, jurisdiction: Optional[str]) -> Optional[str]:
+        normalized = self._normalize_jurisdiction(jurisdiction)
+        if normalized in {
+            "england-wales",
+            "england-and-wales",
+            "scotland",
+            "northern-ireland",
+            "united-kingdom",
+            "great-britain",
+            "uk",
+        }:
+            return "UK"
+        return None
+
     def _normalize_country(self, value: Any) -> str:
         text = str(value or "").strip().lower()
         text = text.replace(".", " ")
@@ -303,6 +332,32 @@ class AsyncCheckAnalysisContract:
             return 0.0
         return difflib.SequenceMatcher(None, left_key, right_key).ratio()
 
+    def _core_name_tokens(self, value: Any) -> set[str]:
+        text = self._normalized_name_key(value)
+        if not text:
+            return set()
+
+        # Ignore legal suffixes and weak words to compare brand/core terms.
+        stop_words = {
+            "ltd",
+            "limited",
+            "plc",
+            "llp",
+            "lp",
+            "inc",
+            "company",
+            "co",
+            "group",
+            "holdings",
+            "holding",
+            "services",
+            "service",
+            "uk",
+            "the",
+            "and",
+        }
+        return {token for token in text.split() if token and token not in stop_words and len(token) > 1}
+
     def _extract_emails(self, text: str) -> List[str]:
         if not text:
             return []
@@ -364,6 +419,7 @@ class AsyncCheckAnalysisContract:
         url = f"{self.base_url}/company/{company_number}"
         async with self.semaphore:
             try:
+                await self._ensure_session()
                 async with self.session.get(url) as response:
                     if response.status == 200:
                         return await response.json(), response.status
@@ -376,6 +432,7 @@ class AsyncCheckAnalysisContract:
         url = f"{self.base_url}/search/companies"
         async with self.semaphore:
             try:
+                await self._ensure_session()
                 async with self.session.get(url, params={"q": company_name}) as response:
                     if response.status != 200:
                         return None
@@ -385,6 +442,22 @@ class AsyncCheckAnalysisContract:
                 self.logger.exception(f"Error searching company name {company_name}: {exc}")
                 return None
 
+    # Jurisdiction → country mapping
+    JURISDICTION_COUNTRY_MAP = {
+        "england-wales": "United Kingdom",
+        "england_and_wales": "United Kingdom",
+        "england & wales": "United Kingdom",
+        "scotland": "United Kingdom",
+        "northern-ireland": "United Kingdom",
+        "northern_ireland": "United Kingdom",
+        "united-kingdom": "United Kingdom",
+        "united_kingdom": "United Kingdom",
+        "uk": "United Kingdom",
+        "great-britain": "United Kingdom",
+        "great_britain": "United Kingdom",
+        "wales": "United Kingdom",
+    }
+
     def _apply_company_record(self, info: Dict[str, Any]) -> None:
         self.db_company = info
         self.official_company_name = self._company_name_from_record(info) or None
@@ -393,7 +466,14 @@ class AsyncCheckAnalysisContract:
         self.official_registered_address = self._format_address(info) or ""
         self.official_country = self._extract_country(info) or None
         self.official_jurisdiction = self._extract_jurisdiction(info) or None
+        if not self.official_country and self.official_jurisdiction:
+            self.official_country = self._country_from_jurisdiction(self.official_jurisdiction)
         self.incorporation_date = self._parse_date(info.get("incorporation_date") or info.get("date_of_creation"))
+
+        # Map jurisdiction → country if country is missing
+        if not self.official_country and self.official_jurisdiction:
+            normalized_j = self._normalize_jurisdiction(self.official_jurisdiction)
+            self.official_country = self.JURISDICTION_COUNTRY_MAP.get(normalized_j)
 
     async def _cache_company_info(self, info: Dict[str, Any], company_number: Optional[str]) -> None:
         await add_company(
@@ -428,7 +508,20 @@ class AsyncCheckAnalysisContract:
         if input_name and official_name:
             similarity = self._name_similarity(input_name, official_name)
             self.company_name_similarity = int(round(similarity * 100))
-            self.company_name_mismatch = similarity < 0.9
+            input_tokens = self._core_name_tokens(input_name)
+            official_tokens = self._core_name_tokens(official_name)
+            shared_core_tokens = bool(input_tokens and official_tokens and (input_tokens & official_tokens))
+
+            # If a valid company number was used and profile exists, be less strict on
+            # legal-form differences (e.g., LTD vs PLC) as long as core brand tokens match.
+            has_verified_number = bool(
+                self._normalize_company_number(self.data.get("Company Number"))
+                and self._normalize_company_number(self.official_company_number)
+            )
+            if has_verified_number:
+                self.company_name_mismatch = (similarity < 0.55) and (not shared_core_tokens)
+            else:
+                self.company_name_mismatch = similarity < 0.9
 
         self.company_verified = (
             bool(official_name)
@@ -479,8 +572,15 @@ class AsyncCheckAnalysisContract:
         recruiter = str(self.data.get("Responsible Person Full Name") or "").strip()
         self.recruiter_name = recruiter or None
 
-        self.low_identity_data = not (self.email_domain or self.contract_address)
-        self.missing_contact_details = self.low_identity_data
+        # Track missing data separately
+        self.email_missing = not bool(self.email_domain)
+        self.address_missing = not bool(self.contract_address)
+        self.low_identity_data = self.email_missing and self.address_missing
+        self.missing_contact_details = self.email_missing or self.address_missing
+        if self.email_missing:
+            self._flag("missing_email")
+        if self.address_missing:
+            self._flag("missing_address")
         if self.low_identity_data:
             self._flag("low_identity_data")
 
@@ -601,6 +701,8 @@ class AsyncCheckAnalysisContract:
             self.official_registered_address = self._format_address(chosen_item) or ""
             self.official_country = self._extract_country(chosen_item) or None
             self.official_jurisdiction = self._extract_jurisdiction(chosen_item) or None
+            if not self.official_country and self.official_jurisdiction:
+                self.official_country = self._country_from_jurisdiction(self.official_jurisdiction)
 
             await add_company(
                 {
@@ -623,7 +725,12 @@ class AsyncCheckAnalysisContract:
         self.address_match_ok = False
         self.address_mismatch = False
 
-        if not self.contract_address or not self.official_registered_address:
+        # If contract has no address, it's "missing" (already flagged in _collect_contact_signals)
+        if not self.contract_address:
+            return
+
+        # If official address is unknown, can't compare
+        if not self.official_registered_address:
             return
 
         similarity = self._address_similarity(self.contract_address, self.official_registered_address)
@@ -640,11 +747,15 @@ class AsyncCheckAnalysisContract:
         self.domain_mismatch = False
         self.free_email_provider = False
 
+        # If no email found at all, nothing to check — email_missing already flagged
+        if not self.email_domains:
+            return
+
         if any(domain in self.FREE_EMAIL_PROVIDERS for domain in self.email_domains):
             self.free_email_provider = True
             self._flag("free_email_provider")
 
-        if self.email_domains and self.company_domain:
+        if self.company_domain:
             if any(self._domains_match(domain, self.company_domain) for domain in self.email_domains):
                 self.domain_match = True
             else:
@@ -683,6 +794,24 @@ class AsyncCheckAnalysisContract:
             self.contract_date_warning = True
             self._flag("contract_date_warning")
 
+    async def check_suspicious_phrases(self) -> None:
+        raw_phrases = self.data.get("Suspicious Phrases Found") or []
+        if not isinstance(raw_phrases, list):
+            raw_phrases = []
+
+        seen = set()
+        self.suspicious_phrases = []
+        for phrase in raw_phrases:
+            cleaned = str(phrase or "").strip()
+            key = cleaned.lower()
+            if cleaned and key not in seen:
+                self.suspicious_phrases.append(cleaned)
+                seen.add(key)
+
+        self.suspicious_phrases_found = bool(self.suspicious_phrases)
+        if self.suspicious_phrases_found:
+            self._flag("suspicious_phrases_found")
+
     async def check_suspicious_identity_store(self) -> None:
         self.suspicious_identity_match = False
         self.suspicious_identity_fields = []
@@ -698,7 +827,14 @@ class AsyncCheckAnalysisContract:
             return
 
         fields = set()
+        trusted_matches = []
         for match in matches:
+            # Older versions stored every WARNING as bot_auto, which polluted
+            # legitimate domains. Only confirmed/manual or high-risk auto rows
+            # should influence future checks.
+            if str(match.get("source") or "").lower() == "bot_auto":
+                continue
+            trusted_matches.append(match)
             if self.email_domain and match.get("email_domain") and match["email_domain"].lower() == self.email_domain.lower():
                 fields.add("email_domain")
             if self.contact_phone_numbers and match.get("phone_number") == self.contact_phone_numbers[0]:
@@ -713,7 +849,7 @@ class AsyncCheckAnalysisContract:
 
         self.suspicious_identity_match = True
         self.suspicious_identity_fields = sorted(fields)
-        self.suspicious_identity_hits = matches
+        self.suspicious_identity_hits = trusted_matches
         self._flag("suspicious_identity_match")
 
         field_to_flag = {
@@ -727,11 +863,12 @@ class AsyncCheckAnalysisContract:
 
     def _calculate_identity_score(self) -> int:
         score = 0
+        has_registry_identity = self.company_verified or bool(self.official_company_name)
         if self.company_verified:
             score += 50
         if self.address_match_ok:
             score += 20
-        if self.domain_match:
+        if has_registry_identity and self.domain_match:
             score += 20
         if self.free_email_provider:
             score -= 20
@@ -744,11 +881,14 @@ class AsyncCheckAnalysisContract:
             return ["verified_identity"]
 
         ordered = [
+            "suspicious_phrases_found",
             "company_name_missing",
             "company_not_found",
             "company_not_uk",
             "company_name_mismatch",
             "company_not_active",
+            "missing_email",
+            "missing_address",
             "address_mismatch",
             "domain_mismatch",
             "free_email_provider",
@@ -762,42 +902,29 @@ class AsyncCheckAnalysisContract:
             "contract_date_warning",
         ]
 
-        reason_codes = []
-        for code in ordered:
-            if code == "company_name_missing" and self.company_name_missing:
-                reason_codes.append(code)
-            elif code == "company_not_found" and self.company_not_found:
-                reason_codes.append(code)
-            elif code == "company_not_uk" and self.company_not_uk:
-                reason_codes.append(code)
-            elif code == "company_name_mismatch" and self.company_name_mismatch:
-                reason_codes.append(code)
-            elif code == "company_not_active" and self.company_inactive:
-                reason_codes.append(code)
-            elif code == "address_mismatch" and self.address_mismatch:
-                reason_codes.append(code)
-            elif code == "domain_mismatch" and self.domain_mismatch:
-                reason_codes.append(code)
-            elif code == "free_email_provider" and self.free_email_provider:
-                reason_codes.append(code)
-            elif code == "low_identity_data" and self.low_identity_data:
-                reason_codes.append(code)
-            elif code == "company_lookup_failed" and self.company_lookup_failed:
-                reason_codes.append(code)
-            elif code == "template_reuse" and self.template_reuse:
-                reason_codes.append(code)
-            elif code == "contract_date_warning" and self.contract_date_warning:
-                reason_codes.append(code)
-            elif code == "known_suspicious_contract_template" and "contract_template_hash" in self.suspicious_identity_fields:
-                reason_codes.append(code)
-            elif code == "known_suspicious_email_domain" and "email_domain" in self.suspicious_identity_fields:
-                reason_codes.append(code)
-            elif code == "known_suspicious_phone_number" and "phone_number" in self.suspicious_identity_fields:
-                reason_codes.append(code)
-            elif code == "known_suspicious_recruiter" and "recruiter_name" in self.suspicious_identity_fields:
-                reason_codes.append(code)
+        code_checks = {
+            "suspicious_phrases_found": self.suspicious_phrases_found,
+            "company_name_missing": self.company_name_missing,
+            "company_not_found": self.company_not_found,
+            "company_not_uk": self.company_not_uk,
+            "company_name_mismatch": self.company_name_mismatch,
+            "company_not_active": self.company_inactive,
+            "missing_email": self.email_missing,
+            "missing_address": self.address_missing,
+            "address_mismatch": self.address_mismatch,
+            "domain_mismatch": self.domain_mismatch,
+            "free_email_provider": self.free_email_provider,
+            "low_identity_data": self.low_identity_data,
+            "company_lookup_failed": self.company_lookup_failed,
+            "template_reuse": self.template_reuse,
+            "contract_date_warning": self.contract_date_warning,
+            "known_suspicious_contract_template": "contract_template_hash" in self.suspicious_identity_fields,
+            "known_suspicious_email_domain": "email_domain" in self.suspicious_identity_fields,
+            "known_suspicious_phone_number": "phone_number" in self.suspicious_identity_fields,
+            "known_suspicious_recruiter": "recruiter_name" in self.suspicious_identity_fields,
+        }
 
-        return reason_codes
+        return [code for code in ordered if code_checks.get(code, False)]
 
     def _reason_text(self, code: str) -> str:
         messages = {
@@ -806,10 +933,13 @@ class AsyncCheckAnalysisContract:
             "company_not_uk": "The company is not registered in the UK.",
             "company_name_mismatch": "The company name does not match official UK records.",
             "company_not_active": "The company is not active in the UK registry.",
+            "suspicious_phrases_found": "The contract contains suspicious hiring or payment phrases.",
             "template_reuse": "This contract template was reused across different company names.",
             "domain_mismatch": "The contact email domain does not match the company domain.",
             "free_email_provider": "A free email provider is being used for employer contact.",
             "address_mismatch": "The contract address does not match the official registered address.",
+            "missing_email": "No employer email was found in the contract.",
+            "missing_address": "No employer address was provided in the contract.",
             "low_identity_data": "The contract is missing both an employer email and an address.",
             "company_lookup_failed": "The official company lookup could not be completed.",
             "contract_date_warning": "The contract date looks unusual.",
@@ -824,6 +954,7 @@ class AsyncCheckAnalysisContract:
     def _determine_risk_level(self) -> str:
         hard_risk = any(
             [
+                self.suspicious_phrases_found,
                 self.company_name_missing,
                 self.company_not_found,
                 self.company_not_uk,
@@ -834,11 +965,17 @@ class AsyncCheckAnalysisContract:
         if hard_risk:
             return "HIGH_RISK"
 
+        # Company is verified but missing critical identity data → HIGH_RISK
+        # A real company with no verifiable contact info is a strong fraud signal
+        if self.company_verified and self.low_identity_data:
+            return "HIGH_RISK"
+
         warning = any(
             [
                 self.domain_mismatch,
                 self.address_mismatch,
-                self.low_identity_data,
+                self.email_missing,
+                self.address_missing,
                 self.free_email_provider,
                 self.company_lookup_failed,
             ]
@@ -853,6 +990,9 @@ class AsyncCheckAnalysisContract:
 
     def _build_explanation(self) -> str:
         if self.risk_level == "HIGH_RISK":
+            if self.suspicious_phrases_found:
+                phrases = ", ".join(self.suspicious_phrases[:5])
+                return f"The contract contains suspicious phrases: {phrases}."
             if self.company_name_missing:
                 return "No employer company name was found, so the contract cannot be verified against the UK registry."
             if self.company_not_found:
@@ -863,6 +1003,15 @@ class AsyncCheckAnalysisContract:
                 return "The company name in the contract does not closely match the official UK company record."
             if self.company_inactive:
                 return "The employer exists in the UK registry but is not active."
+            if self.company_verified and self.low_identity_data:
+                issues = []
+                if self.email_missing:
+                    issues.append("employer email")
+                if self.address_missing:
+                    issues.append("verifiable contact details")
+                missing = " and ".join(issues) if issues else "verifiable identity data"
+                return (f"The company is registered and active in the UK. However, the contract does not include any {missing}. "
+                        f"This makes it impossible to confirm the legitimacy of the offer and is a strong indicator of potential fraud.")
             return "The employer failed mandatory UK company verification checks."
         if self.risk_level == "WARNING":
             cleaned = [reason.rstrip(".") for reason in self.reasons[:4]]
@@ -905,6 +1054,7 @@ class AsyncCheckAnalysisContract:
         await self.check_email_domain()
         await self.check_template_reuse()
         await self.check_contract_date()
+        await self.check_suspicious_phrases()
         await self.check_suspicious_identity_store()
 
         self.identity_score = self._calculate_identity_score()
@@ -943,6 +1093,8 @@ class AsyncCheckAnalysisContract:
             "contract_template_hash": self.template_hash,
             "template_reuse": self.template_reuse,
             "contract_date_warning": self.contract_date_warning,
+            "suspicious_phrases_found": self.suspicious_phrases_found,
+            "suspicious_phrases": self.suspicious_phrases,
             "suspicious_identity_match": self.suspicious_identity_match,
             "suspicious_identity_fields": self.suspicious_identity_fields,
             "official_company_name": self.official_company_name,
@@ -966,17 +1118,20 @@ class AsyncCheckAnalysisContract:
                 "Official Registered Address": self.official_registered_address or None,
                 "Official Country": self.official_country,
                 "Official Jurisdiction": self.official_jurisdiction,
-                "Address Match": self.address_match_ok,
+                "Address Match": self.address_match_ok if not self.address_missing else None,
+                "Address Missing": self.address_missing,
                 "Address Similarity": self.address_match_score,
                 "Email Domain": self.email_domain,
+                "Email Missing": self.email_missing,
                 "Company Domain": self.company_domain,
-                "Domain Match": self.domain_match,
-                "Free Email Provider": self.free_email_provider,
+                "Domain Match": self.domain_match if not self.email_missing else None,
+                "Free Email Provider": self.free_email_provider if not self.email_missing else None,
                 "Low Identity Data": self.low_identity_data,
                 "Missing Contact Details": self.missing_contact_details,
                 "Template Hash": self.template_hash,
                 "Template Reuse": self.template_reuse,
                 "Contract Date Warning": self.contract_date_warning,
+                "Suspicious Phrases Found": self.suspicious_phrases,
                 "Suspicious Identity Match": self.suspicious_identity_match,
                 "Suspicious Identity Fields": self.suspicious_identity_fields,
                 "Reasons": self.reasons,

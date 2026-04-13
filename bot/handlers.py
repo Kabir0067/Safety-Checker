@@ -407,7 +407,7 @@ async def callback_set_language(call: types.CallbackQuery) -> None:
     m.text.strip() in ["🇷🇺 Русский", "🇹🇯 Тоҷикӣ", "🇬🇧 English"] or
     m.text.strip().lower() in ["русский", "тоҷикӣ", "english", "ru", "tj", "en"]
 ))
-async def set_user_language_text(message: types.Message) -> None:
+async def set_user_language_text(message) -> None:
     user_id = str(message.chat.id)
     normalized = message.text.strip().lower()
 
@@ -530,13 +530,25 @@ async def receive_feedback(message: types.Message) -> None:
     email_msg.set_content(email_body)
 
     try:
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_port = int(os.getenv("SMTP_PORT", 587))
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        feedback_to = os.getenv("FEEDBACK_EMAIL")
+
+        if not all([smtp_host, smtp_user, smtp_password, feedback_to]):
+            raise ValueError("SMTP env vars are incomplete. Required: SMTP_HOST, SMTP_USER, SMTP_PASSWORD, FEEDBACK_EMAIL.")
+
+        # Port 465 usually requires SSL/TLS from start, while 587 uses STARTTLS.
+        use_tls = smtp_port == 465
         await aiosmtplib.send(
             email_msg,
-            hostname=os.getenv("SMTP_HOST"),
-            port=int(os.getenv("SMTP_PORT", 587)),
-            start_tls=True,
-            username=os.getenv("SMTP_USER"),
-            password=os.getenv("SMTP_PASSWORD")
+            hostname=smtp_host,
+            port=smtp_port,
+            use_tls=use_tls,
+            start_tls=not use_tls,
+            username=smtp_user,
+            password=smtp_password
         )
 
         if lang == 'ru':
@@ -625,25 +637,111 @@ def _normalize_status_category(status_raw: Any) -> str:
 
 def _translate_reason(code: str, fallback: str, lang: str) -> str:
     translations = {
-        "company_name_missing": "No company name was found in the contract.",
-        "company_not_found": "The company was not found in the UK registry.",
-        "company_not_uk": "The company is not registered in the UK.",
-        "company_name_mismatch": "The company name does not match official UK records.",
-        "company_not_active": "The company is not active in the UK registry.",
-        "template_reuse": "This contract template was reused across different company names.",
-        "domain_mismatch": "The contact email domain does not match the company domain.",
-        "free_email_provider": "A free email provider is being used for employer contact.",
-        "address_mismatch": "The contract address does not match the official registered address.",
-        "low_identity_data": "The contract is missing both an employer email and an address.",
-        "company_lookup_failed": "The official company lookup could not be completed.",
-        "contract_date_warning": "The contract date looks unusual.",
-        "known_suspicious_email_domain": "This email domain has appeared in previous suspicious checks.",
-        "known_suspicious_phone_number": "This phone number has appeared in previous suspicious checks.",
-        "known_suspicious_recruiter": "This recruiter name has appeared in previous suspicious checks.",
-        "known_suspicious_contract_template": "This contract hash has appeared in previous suspicious checks.",
-        "verified_identity": "The company was verified and no critical identity mismatches were found.",
+        "company_name_missing": {
+            "ru": "В договоре не найдено название компании.",
+            "tj": "Дар шартнома номи ширкат ёфт нашуд.",
+            "en": "No company name was found in the contract.",
+        },
+        "company_not_found": {
+            "ru": "Компания не найдена в реестре Великобритании.",
+            "tj": "Ширкат дар реестри Британияи Кабир ёфт нашуд.",
+            "en": "The company was not found in the UK registry.",
+        },
+        "company_not_uk": {
+            "ru": "Компания не зарегистрирована в Великобритании.",
+            "tj": "Ширкат дар Британияи Кабир ба қайд гирифта нашудааст.",
+            "en": "The company is not registered in the UK.",
+        },
+        "company_name_mismatch": {
+            "ru": "Название компании не совпадает с официальными данными UK реестра.",
+            "tj": "Номи ширкат бо сабти расмии реестри Британияи Кабир мувофиқат намекунад.",
+            "en": "The company name does not match official UK records.",
+        },
+        "company_not_active": {
+            "ru": "Компания не активна в реестре Великобритании.",
+            "tj": "Ширкат дар реестри Британияи Кабир фаъол нест.",
+            "en": "The company is not active in the UK registry.",
+        },
+        "suspicious_phrases_found": {
+            "ru": "В договоре найдены подозрительные фразы о платеже или найме.",
+            "tj": "Дар шартнома ибораҳои шубҳанок дар бораи пардохт ё қабул ба кор ёфт шуданд.",
+            "en": "The contract contains suspicious hiring or payment phrases.",
+        },
+        "template_reuse": {
+            "ru": "Шаблон договора использовался для разных компаний.",
+            "tj": "Шаблони шартнома барои ширкатҳои гуногун такроран истифода шудааст.",
+            "en": "This contract template was reused across different company names.",
+        },
+        "domain_mismatch": {
+            "ru": "Домен email контакта не совпадает с доменом компании.",
+            "tj": "Домени email-и тамос бо домени ширкат мувофиқат намекунад.",
+            "en": "The contact email domain does not match the company domain.",
+        },
+        "free_email_provider": {
+            "ru": "Для контакта работодателя используется бесплатный email-провайдер.",
+            "tj": "Барои тамоси корфармо провайдери email-и ройгон истифода шудааст.",
+            "en": "A free email provider is being used for employer contact.",
+        },
+        "address_mismatch": {
+            "ru": "Адрес в договоре не совпадает с официальным зарегистрированным адресом.",
+            "tj": "Суроғаи шартнома бо суроғаи расмии бақайдгирӣ мувофиқат намекунад.",
+            "en": "The contract address does not match the official registered address.",
+        },
+        "missing_email": {
+            "ru": "В договоре не найден email работодателя.",
+            "tj": "Дар шартнома email-и корфармо ёфт нашуд.",
+            "en": "No employer email was found in the contract.",
+        },
+        "missing_address": {
+            "ru": "В договоре не указан адрес работодателя.",
+            "tj": "Дар шартнома суроғаи корфармо нишон дода нашудааст.",
+            "en": "No employer address was provided in the contract.",
+        },
+        "low_identity_data": {
+            "ru": "В договоре отсутствуют и email работодателя, и адрес.",
+            "tj": "Дар шартнома ҳам email-и корфармо ва ҳам суроға мавҷуд нест.",
+            "en": "The contract is missing both an employer email and an address.",
+        },
+        "company_lookup_failed": {
+            "ru": "Не удалось выполнить официальную проверку компании.",
+            "tj": "Санҷиши расмии ширкат иҷро нашуд.",
+            "en": "The official company lookup could not be completed.",
+        },
+        "contract_date_warning": {
+            "ru": "Дата договора выглядит необычной.",
+            "tj": "Санаи шартнома ғайриодӣ ба назар мерасад.",
+            "en": "The contract date looks unusual.",
+        },
+        "known_suspicious_email_domain": {
+            "ru": "Этот email-домен уже встречался в подозрительных проверках.",
+            "tj": "Ин домени email қаблан дар санҷишҳои шубҳанок дучор шудааст.",
+            "en": "This email domain has appeared in previous suspicious checks.",
+        },
+        "known_suspicious_phone_number": {
+            "ru": "Этот номер телефона уже встречался в подозрительных проверках.",
+            "tj": "Ин рақами телефон қаблан дар санҷишҳои шубҳанок дучор шудааст.",
+            "en": "This phone number has appeared in previous suspicious checks.",
+        },
+        "known_suspicious_recruiter": {
+            "ru": "Это имя рекрутера уже встречалось в подозрительных проверках.",
+            "tj": "Ин номи рекрутер қаблан дар санҷишҳои шубҳанок дучор шудааст.",
+            "en": "This recruiter name has appeared in previous suspicious checks.",
+        },
+        "known_suspicious_contract_template": {
+            "ru": "Этот хэш шаблона договора уже встречался в подозрительных проверках.",
+            "tj": "Ин хэши шаблони шартнома қаблан дар санҷишҳои шубҳанок дучор шудааст.",
+            "en": "This contract hash has appeared in previous suspicious checks.",
+        },
+        "verified_identity": {
+            "ru": "Компания подтверждена, критических расхождений личности не обнаружено.",
+            "tj": "Ширкат тасдиқ шуд, номувофиқии ҷиддии шахсият ошкор нашуд.",
+            "en": "The company was verified and no critical identity mismatches were found.",
+        },
     }
-    return translations.get(code, fallback or code.replace("_", " ").capitalize())
+    mapped = translations.get(code)
+    if isinstance(mapped, dict):
+        return mapped.get(lang, mapped.get("en", fallback or code.replace("_", " ").capitalize()))
+    return fallback or code.replace("_", " ").capitalize()
 
 
 def _localized_reasons(detailed_report: Dict[str, Any], lang: str) -> List[str]:
@@ -670,65 +768,101 @@ def _summary_value(value: Any, max_len: int = 110) -> str:
     return html.escape(text)
 
 
+def _localize_report_explanation(explanation: Any, lang: str) -> str:
+    text = str(explanation or "").strip()
+    if not text:
+        return ""
+
+    suspicious_prefix = "The contract contains suspicious phrases:"
+    if text.startswith(suspicious_prefix):
+        phrases = text[len(suspicious_prefix):].strip()
+        prefixes = {
+            "ru": "В договоре найдены подозрительные фразы:",
+            "tj": "Дар шартнома ибораҳои шубҳанок ёфт шуданд:",
+            "en": suspicious_prefix,
+        }
+        return f"{prefixes.get(lang, prefixes['en'])} {phrases}".strip()
+
+    mapping = {
+        "No employer company name was found, so the contract cannot be verified against the UK registry.": {
+            "ru": "Название компании работодателя не найдено, поэтому договор нельзя проверить по реестру Великобритании.",
+            "tj": "Номи ширкати корфармо ёфт нашуд, бинобар ин шартномаро бо реестри Британияи Кабир санҷидан имконнопазир аст.",
+            "en": "No employer company name was found, so the contract cannot be verified against the UK registry.",
+        },
+        "The employer could not be found in the UK registry, which is a strong fraud signal.": {
+            "ru": "Работодатель не найден в реестре Великобритании, что является сильным признаком мошенничества.",
+            "tj": "Корфармо дар реестри Британияи Кабир ёфт нашуд, ки ин нишонаи қавии қаллобӣ аст.",
+            "en": "The employer could not be found in the UK registry, which is a strong fraud signal.",
+        },
+        "The company name in the contract does not closely match the official UK company record.": {
+            "ru": "Название компании в договоре существенно не совпадает с официальной записью в реестре Великобритании.",
+            "tj": "Номи ширкат дар шартнома бо сабти расмии реестри Британияи Кабир мувофиқат намекунад.",
+            "en": "The company name in the contract does not closely match the official UK company record.",
+        },
+        "The company is registered and active in the UK, and the email domain matches the company identity.": {
+            "ru": "Компания зарегистрирована и активна в Великобритании, а email-домен совпадает с идентичностью компании.",
+            "tj": "Ширкат дар Британияи Кабир ба қайд гирифта шуда фаъол аст ва домени email ба ҳувияти ширкат мувофиқ аст.",
+            "en": "The company is registered and active in the UK, and the email domain matches the company identity.",
+        },
+        "The employer exists in the UK registry but is not active.": {
+            "ru": "Работодатель существует в реестре Великобритании, но не является активным.",
+            "tj": "Корфармо дар реестри Британияи Кабир мавҷуд аст, аммо фаъол нест.",
+            "en": "The employer exists in the UK registry but is not active.",
+        },
+    }
+
+    if text in mapping:
+        return mapping[text].get(lang, mapping[text]["en"])
+    return text
+
+
 def _build_pretty_summary(
     lang: str,
     file_type: str,
     detailed_report: Dict[str, Any],
     ai_result: Dict[str, Any],
 ) -> str:
-    labels = {
-        'ru': {
-            'format': "📄 <b>Формат:</b>",
-            'score': "⭐️ <b>Общий балл:</b>",
-            'status': "🛡️ <b>Статус:</b>",
-            'company': "🏢 <b>Компания:</b>",
-            'company_number': "📇 <b>Номер компании:</b>",
-            'domain': "🌐 <b>Домен:</b>",
-        },
-        'tj': {
-            'format': "📄 <b>Формат:</b>",
-            'score': "⭐️ <b>Холи умумӣ:</b>",
-            'status': "🛡️ <b>Ҳолат:</b>",
-            'company': "🏢 <b>Ширкат:</b>",
-            'company_number': "📇 <b>Рақами ширкат:</b>",
-            'domain': "🌐 <b>Домен:</b>",
-        },
-        'en': {
-            'format': "📄 <b>Format:</b>",
-            'score': "🧠 <b>Identity confidence:</b>",
-            'status': "🛡️ <b>Risk level:</b>",
-            'company': "🏢 <b>Company:</b>",
-            'company_number': "📇 <b>Company number:</b>",
-            'domain': "🌐 <b>Company domain:</b>",
-        },
+    status_icons_map = {'safe': "🟢 🛡️", 'warning': "🟡 ⚠️", 'unsafe': "🔴 🚨", 'unknown': "⚪ ℹ️"}
+    status_text_map = {
+        'ru': {'safe': "Безопасно — надёжно", 'warning': "Требует внимания", 'unsafe': "Рисковано — подозрительно", 'unknown': "Неизвестно"},
+        'tj': {'safe': "Бехатар — боваринок", 'warning': "Ниёз ба диққат", 'unsafe': "Хатарнок — шубҳанок", 'unknown': "Номаълум"},
+        'en': {'safe': "Safe — Reliable", 'warning': "Needs Attention", 'unsafe': "HIGH RISK", 'unknown': "Unknown"},
+    }
+    summary_labels = {
+        'ru': {'score': "⭐️ Балл", 'status': "🛡️ Статус", 'company': "🏢 Компания", 'domain': "🌐 Домен", 'summary': "📝 Итог", 'reasons': "⚠️ Причины"},
+        'tj': {'score': "⭐️ Балл", 'status': "🛡️ Ҳолат", 'company': "🏢 Ширкат", 'domain': "🌐 Домен", 'summary': "📝 Хулоса", 'reasons': "⚠️ Сабабҳо"},
+        'en': {'score': "⭐️ Score", 'status': "🛡️ Risk Level", 'company': "🏢 Company", 'domain': "🌐 Domain", 'summary': "📝 Summary", 'reasons': "⚠️ Reasons"},
     }
 
-    status_icons = {'safe': "🟢", 'warning': "🟠", 'unsafe': "🔴", 'unknown': "⚪"}
-    status_text = {'safe': "SAFE", 'warning': "WARNING", 'unsafe': "HIGH_RISK", 'unknown': "UNKNOWN"}
-
-    L = labels.get(lang, labels['en'])
-    total_score = detailed_report.get("identity_score", 0)
+    L = summary_labels.get(lang, summary_labels['en'])
+    total_score = max(0, min(100, int(detailed_report.get("identity_score", 0) or 0)))
     status_raw = detailed_report.get("risk_level")
-    reasons = _localized_reasons(detailed_report, lang)
-    explanation = str(detailed_report.get("explanation") or "").strip()
     category = _normalize_status_category(status_raw)
-    icon = status_icons.get(category, status_icons['unknown'])
-    status_label = status_text.get(category, status_text['unknown'])
+    icon = status_icons_map.get(category, status_icons_map['unknown'])
+    st_map = status_text_map.get(lang, status_text_map['en'])
+    status_label = st_map.get(category, st_map['unknown'])
+    reasons = _localized_reasons(detailed_report, lang)
+    explanation = _localize_report_explanation(detailed_report.get("explanation"), lang)
+    company_name = _summary_value(detailed_report.get('official_company_name') or ai_result.get('Company Name'))
+    domain_val = _summary_value(detailed_report.get('company_domain') or ai_result.get('Website Domain'), max_len=80)
 
     lines = [
-        f"{L['format']} <code>{html.escape(_normalize_input_format(file_type))}</code>",
-        f"{L['score']} <b>{max(0, min(100, int(total_score or 0)))}</b>",
-        f"{L['status']} {icon} <b>{status_label}</b>",
+        f"🛡️ <b>{L['status']}:</b> {icon} {html.escape(status_label)}",
         "",
-        f"{L['company']} <code>{_summary_value(detailed_report.get('official_company_name') or ai_result.get('Company Name'))}</code>",
-        f"{L['company_number']} <code>{_summary_value(detailed_report.get('official_company_number') or ai_result.get('Company Number'), max_len=30)}</code>",
-        f"{L['domain']} <code>{_summary_value(detailed_report.get('company_domain') or ai_result.get('Website Domain'), max_len=80)}</code>",
+        f"{L['company']} <code>{company_name}</code>",
+        f"{L['score']}: <b>{total_score}/100</b>",
     ]
+    if domain_val != "—":
+        lines.append(f"{L['domain']}: <code>{domain_val}</code>")
+
     if explanation:
-        lines.extend(["", f"📝 <b>Summary:</b>", html.escape(explanation)])
-    if reasons:
-        lines.extend(["", f"⚠️ <b>Reasons:</b>"])
+        lines.extend(["", f"{L['summary']}:", html.escape(explanation)])
+
+    # Only show reasons if there are actual issues (not for SAFE)
+    if reasons and category != 'safe':
+        lines.extend(["", f"{L['reasons']}:"])
         lines.extend(f"• {html.escape(reason)}" for reason in reasons[:6])
+
     return "\n".join(lines)
 
 async def process_file(file: types.Document):
@@ -1235,17 +1369,19 @@ async def process_contract_text(
             if phone_match:
                 raw_phone = phone_match[0].strip()
                 digits = re.sub(r"\D", "", raw_phone)
+                if raw_phone.startswith("+") and digits.startswith("440"):
+                    digits = "44" + digits[3:]
                 phone_number = f"+{digits}" if raw_phone.startswith("+") else digits
             else:
                 phone_number = None
             recruiter_name = ai_result.get('Responsible Person Full Name')
-            if risk_level != "SAFE" and any([detailed_report.get('email_domain'), phone_number, recruiter_name, detailed_report.get('contract_template_hash')]):
+            if _normalize_status_category(risk_level) == "unsafe" and any([detailed_report.get('email_domain'), phone_number, recruiter_name, detailed_report.get('contract_template_hash')]):
                 await add_suspicious_entity({
                     'email_domain': detailed_report.get('email_domain'),
                     'phone_number': phone_number,
                     'recruiter_name': recruiter_name,
                     'contract_template_hash': detailed_report.get('contract_template_hash'),
-                    'source': 'bot_auto',
+                    'source': 'bot_auto_high_risk',
                 })
         except Exception as e:
             print(f"add_suspicious_entity error: {e}")
@@ -1486,95 +1622,80 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
 
 
 
-    new_categories = [
-        ('Risk Level', {'ru': 'Risk Level', 'tj': 'Risk Level', 'en': 'Risk Level'}),
-        ('Identity Confidence Score', {'ru': 'Identity Confidence', 'tj': 'Identity Confidence', 'en': 'Identity Confidence'}),
-        ('Company Verified', {'ru': 'Company Verified', 'tj': 'Company Verified', 'en': 'Company Verified'}),
-        ('Company Name Present', {'ru': 'Company Name Present', 'tj': 'Company Name Present', 'en': 'Company Name Present'}),
-        ('Company UK Match', {'ru': 'Company UK Match', 'tj': 'Company UK Match', 'en': 'Company UK Match'}),
-        ('Company Name Matches Official Record', {'ru': 'Company Name Matches Official Record', 'tj': 'Company Name Matches Official Record', 'en': 'Company Name Matches Official Record'}),
-        ('Company Name Similarity', {'ru': 'Company Name Similarity', 'tj': 'Company Name Similarity', 'en': 'Company Name Similarity'}),
-        ('Company Status', {'ru': 'Company Status', 'tj': 'Company Status', 'en': 'Company Status'}),
-        ('Official Company Name', {'ru': 'Official Company Name', 'tj': 'Official Company Name', 'en': 'Official Company Name'}),
-        ('Official Company Number', {'ru': 'Official Company Number', 'tj': 'Official Company Number', 'en': 'Official Company Number'}),
-        ('Official Registered Address', {'ru': 'Official Registered Address', 'tj': 'Official Registered Address', 'en': 'Official Registered Address'}),
-        ('Official Country', {'ru': 'Official Country', 'tj': 'Official Country', 'en': 'Official Country'}),
-        ('Official Jurisdiction', {'ru': 'Official Jurisdiction', 'tj': 'Official Jurisdiction', 'en': 'Official Jurisdiction'}),
-        ('Address Match', {'ru': 'Address Match', 'tj': 'Address Match', 'en': 'Address Match'}),
-        ('Address Similarity', {'ru': 'Address Similarity', 'tj': 'Address Similarity', 'en': 'Address Similarity'}),
-        ('Email Domain', {'ru': 'Email Domain', 'tj': 'Email Domain', 'en': 'Email Domain'}),
-        ('Company Domain', {'ru': 'Company Domain', 'tj': 'Company Domain', 'en': 'Company Domain'}),
-        ('Domain Match', {'ru': 'Domain Match', 'tj': 'Domain Match', 'en': 'Domain Match'}),
-        ('Free Email Provider', {'ru': 'Free Email Provider', 'tj': 'Free Email Provider', 'en': 'Free Email Provider'}),
-        ('Low Identity Data', {'ru': 'Low Identity Data', 'tj': 'Low Identity Data', 'en': 'Low Identity Data'}),
-        ('Missing Contact Details', {'ru': 'Missing Contact Details', 'tj': 'Missing Contact Details', 'en': 'Missing Contact Details'}),
-        ('Template Reuse', {'ru': 'Template Reuse', 'tj': 'Template Reuse', 'en': 'Template Reuse'}),
-        ('Suspicious Identity Match', {'ru': 'Suspicious Identity Match', 'tj': 'Suspicious Identity Match', 'en': 'Suspicious Identity Match'}),
-        ('Suspicious Identity Fields', {'ru': 'Suspicious Identity Fields', 'tj': 'Suspicious Identity Fields', 'en': 'Suspicious Identity Fields'}),
-        ('Contract Date Warning', {'ru': 'Contract Date Warning', 'tj': 'Contract Date Warning', 'en': 'Contract Date Warning'}),
-        ('Reasons', {'ru': 'Reasons', 'tj': 'Reasons', 'en': 'Reasons'}),
-        ('Explanation', {'ru': 'Explanation', 'tj': 'Explanation', 'en': 'Explanation'}),
-        ('Risk Flags', {'ru': 'Risk Flags', 'tj': 'Risk Flags', 'en': 'Risk Flags'})
-    ]
-
-    legacy_categories = [
-        ('Contract Number', {'ru': 'Номер договора', 'tj': 'Рақами шартнома', 'en': 'Contract Number'}),
-        ('Company Number', {'ru': 'Номер компании', 'tj': 'Рақами ширкат', 'en': 'Company Number'}),
-        ('Company Name', {'ru': 'Название компании', 'tj': 'Номи ширкат', 'en': 'Company Name'}),
-        ('Registered Address', {'ru': 'Юридический адрес', 'tj': 'Суроғаи қайд', 'en': 'Registered Address'}),
-        ('Contact Details', {'ru': 'Контакты', 'tj': 'Тамос', 'en': 'Contact Details'}),
-        ('Suspicious Phrases', {'ru': 'Подозрительные фразы', 'tj': 'Ибораҳои шубҳанок', 'en': 'Suspicious Phrases'}),
-        ('Text Style', {'ru': 'Стиль текста', 'tj': 'Сабки матн', 'en': 'Text Style'}),
-        ('Website Domain', {'ru': 'Домен сайта', 'tj': 'Домени сайт', 'en': 'Website Domain'}),
-        ('Responsible Person', {'ru': 'Ответственное лицо', 'tj': 'Шахси масъул', 'en': 'Responsible Person'}),
-        ('Contract Date', {'ru': 'Дата договора', 'tj': 'Санаи шартнома', 'en': 'Contract Date'})
-    ]
-
-    new_keys = {k for k, _ in new_categories}
-    legacy_keys = {k for k, _ in legacy_categories}
-
-    if any(k in detailed_scores for k in new_keys):
-        categories = new_categories
-        no_details = False
-    elif any(k in detailed_scores for k in legacy_keys):
-        categories = legacy_categories
-        no_details = False
-    else:
-        categories = new_categories
-        no_details = True
-
-    yes_no = {
-        'ru': ('Да', 'Нет'),
-        'tj': ('Ҳа', 'Не'),
-        'en': ('Yes', 'No')
-    }
-    no_details_map = {
-        'ru': 'Нет подробных данных.',
-        'tj': 'Маълумоти муфассал нест.',
-        'en': 'No detailed data available.'
+    report_checks = {
+        'ru': [
+            ("Номер договора", 10),
+            ("Номер компании", 20),
+            ("Название компании", 15),
+            ("Проверка UK реестра", 15),
+            ("Совпадение названия", 10),
+            ("Совпадение адреса", 10),
+            ("Наличие email работодателя", 5),
+            ("Совпадение домена", 5),
+            ("Подозрительные совпадения", 5),
+            ("Дата договора", 5),
+        ],
+        'tj': [
+            ("Рақами шартнома", 10),
+            ("Рақами ширкат", 20),
+            ("Номи ширкат", 15),
+            ("Санҷиши UK registry", 15),
+            ("Мувофиқати ном", 10),
+            ("Мувофиқати суроға", 10),
+            ("Ҳузури email корфармо", 5),
+            ("Мувофиқати домен", 5),
+            ("Мувофиқати шубҳанок", 5),
+            ("Санаи шартнома", 5),
+        ],
+        'en': [
+            ("Contract Number", 10),
+            ("Company Number", 20),
+            ("Company Name", 15),
+            ("UK Registry Verification", 15),
+            ("Name Match", 10),
+            ("Address Match", 10),
+            ("Employer Email Present", 5),
+            ("Domain Match", 5),
+            ("Suspicious Identity Match", 5),
+            ("Contract Date", 5),
+        ],
     }
 
+    checks = report_checks.get(lang, report_checks['en'])
     details_lines = [L['detailed_scores'], ""]
-    if no_details:
-        details_lines.append(no_details_map.get(lang, no_details_map['en']))
-    else:
-        for key, label_map in categories:
-            display = label_map.get(lang, label_map['en'])
-            key_present = key in detailed_scores
-            value = detailed_scores.get(key, None)
-            if not key_present:
-                value_text = L['no_value']
-            elif isinstance(value, list):
-                value_text = ", ".join(str(x) for x in value) if value else L['no_value']
-            elif isinstance(value, bool):
-                yes_text, no_text = yes_no.get(lang, yes_no['en'])
-                value_text = yes_text if value else no_text
-            elif value is None or value == "":
-                value_text = L['no_value']
-            else:
-                value_text = str(value)
-            presence = "✅" if key_present else "⚪"
-            details_lines.append(f"{presence} <b>{display}:</b> <code>{value_text}</code>")
+
+    contract_number_ok = bool(check.get('contract_number'))
+    company_number_ok = bool(detailed_scores.get("Official Company Number"))
+    company_name_ok = bool(check.get('extracted_company_name') or check.get('company_name'))
+    uk_verified_ok = bool(detailed_scores.get("Company UK Match")) if detailed_scores.get("Company UK Match") is not None else False
+    name_match_ok = bool(detailed_scores.get("Company Name Matches Official Record")) if detailed_scores.get("Company Name Matches Official Record") is not None else False
+    address_match_ok = bool(detailed_scores.get("Address Match")) if detailed_scores.get("Address Match") is not None else False
+    email_present_ok = not bool(detailed_scores.get("Email Missing"))
+    domain_match_ok = bool(detailed_scores.get("Domain Match")) if detailed_scores.get("Domain Match") is not None else False
+    suspicious_ok = not bool(detailed_scores.get("Suspicious Identity Match"))
+    contract_date_ok = bool(check.get('contract_date'))
+
+    status_flags = [
+        contract_number_ok,
+        company_number_ok,
+        company_name_ok,
+        uk_verified_ok,
+        name_match_ok,
+        address_match_ok,
+        email_present_ok,
+        domain_match_ok,
+        suspicious_ok,
+        contract_date_ok,
+    ]
+
+    for (label, points), is_ok in zip(checks, status_flags):
+        mark = "✅" if is_ok else "🔴"
+        got = points if is_ok else 0
+        details_lines.append(f"{mark} <b>{label}:</b> <code>{got}/{points}</code>")
+
+    explanation = _localize_report_explanation(detailed_scores.get("Explanation"), lang)
+    if explanation:
+        details_lines.extend(["", f"📝 <b>Summary:</b>", html.escape(explanation)])
 
     details_text = "\n".join(details_lines)
     full_text = header_text + "\n" + details_text
