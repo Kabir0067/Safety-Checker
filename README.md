@@ -89,6 +89,12 @@ OPENROUTER_API_KEY=your_openrouter_key
 OPENROUTER_APP_URL=https://your-app.example
 OPENROUTER_APP_NAME=Safety-Checker
 
+# Free-only AI mode (default enabled)
+AI_FREE_ONLY=1
+GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-flash-lite
+GROQ_MODELS=llama-3.1-8b-instant,openai/gpt-oss-20b
+OPENROUTER_MODELS=google/gemma-3-4b-it:free,openai/gpt-oss-20b:free
+
 # Company verification API (recommended)
 COMPANIES_HOUSE_API=your_companies_house_key
 
@@ -122,6 +128,8 @@ ADMIN_OPEN_FIREWALL=1
 
 Notes:
 - Backward compatibility is kept for old keys: `GEMINI_AI_API_KEY`, `GROQ_AI_API_KEY`, `OPEN_ROUTER`, `OPEN_ROUTER_API_KEY`.
+- `AI_FREE_ONLY=1` is the default behavior: the bot only selects free or free-tier models.
+- Set `AI_FREE_ONLY=0` only if you explicitly want paid/provider-auto model selection later.
 - Maximum upload size is `10 MB`.
 
 ## 6) Installation
@@ -234,7 +242,8 @@ Quick checks:
 
 ```bash
 python -m py_compile main.py
-python -m unittest tests.test_verification_logic -v
+python -m unittest tests.test_file_processing tests.test_verification_logic tests.test_ai_processing tests.test_end_to_end_pipeline -v
+python tests/live_provider_smoke.py
 ```
 
 Then run:

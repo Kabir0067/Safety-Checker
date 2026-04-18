@@ -18,9 +18,19 @@ class BotUserAdmin(admin.ModelAdmin):
 
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "company_number", "status", "score", "website_domain", "last_updated")
-    search_fields = ("name", "company_number", "website_domain")
-    list_filter = ("status",)
+    list_display = (
+        "id",
+        "name",
+        "company_number",
+        "status",
+        "country",
+        "jurisdiction",
+        "score",
+        "website_domain",
+        "last_updated",
+    )
+    search_fields = ("name", "company_number", "website_domain", "country", "jurisdiction")
+    list_filter = ("status", "country", "jurisdiction")
     ordering = ("-id",)
     readonly_fields = ("created_at", "last_updated")
 
@@ -62,4 +72,3 @@ class SuspiciousCompanyAdmin(admin.ModelAdmin):
     list_filter = ("status", "source")
     ordering = ("-id",)
     readonly_fields = ("created_at", "updated_at", "verified_at")
-

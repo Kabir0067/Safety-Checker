@@ -24,10 +24,46 @@ import uuid
 import logging
 import hashlib
 import asyncio
+from logging.handlers import RotatingFileHandler
 from sqlalchemy import select, delete
 from database.connection import AsyncSessionLocal
 from PIL import Image
 import io
+
+_AI_USAGE_LOGGER = logging.getLogger("AiProviderUsage")
+if not _AI_USAGE_LOGGER.handlers:
+    os.makedirs("logs", exist_ok=True)
+    _handler = RotatingFileHandler(
+        os.path.join("logs", "ai_provider_usage.log"),
+        maxBytes=2_000_000,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    _AI_USAGE_LOGGER.addHandler(_handler)
+    _AI_USAGE_LOGGER.setLevel(logging.INFO)
+    _AI_USAGE_LOGGER.propagate = False
+
+
+def _log_ai_usage(
+    *,
+    user_id: str,
+    file_type: str,
+    stage: str,
+    diagnostics: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> None:
+    payload = {
+        "user_id": user_id,
+        "file_type": file_type,
+        "stage": stage,
+        "provider": (diagnostics or {}).get("successful_provider"),
+        "model": (diagnostics or {}).get("successful_model"),
+        "fallback_used": (diagnostics or {}).get("fallback_used"),
+        "attempts": (diagnostics or {}).get("attempts"),
+        "error": error,
+    }
+    _AI_USAGE_LOGGER.info(json.dumps(payload, ensure_ascii=False))
 
 
 # ----------------------------------commands----------------------------------
@@ -305,7 +341,7 @@ async def handle_about(message: types.Message) -> None:
             "🔹 Paste contract text directly into the chat 💬\n"
             "🔹 AI-powered analysis — extracts key data, identifies suspicious wording, and evaluates structure 🤖\n"
             "🔹 Company verification via *Companies House* — validates status, address, and authenticity 🏢\n"
-            "🔹 Verification Decisions: ✅ SAFE | ⚠️ WARNING | 🚨 HIGH_RISK\n"
+            "🔹 Verification Decisions: ✅ SAFE | ⚠️ WARNING | 🚨 HIGH RISK\n"
             "🔹 Access your check history with /report 🗂️\n\n"
             "💡 *Tip:* text-based files (.PDF, .DOCX) process faster; images require OCR.\n\n"
             "🛡️ The bot uses a local database for high speed and reliability, minimizing dependence on external APIs.\n\n"
@@ -816,6 +852,246 @@ def _localize_report_explanation(explanation: Any, lang: str) -> str:
     return text
 
 
+def _extract_primary_email(contact_details: Any) -> str:
+    text = str(contact_details or "")
+    match = re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", text)
+    return match.group(0) if match else ""
+
+
+def _fact_icon(state: str) -> str:
+    return {
+        "pass": "✅",
+        "warn": "⚠️",
+        "fail": "❌",
+        "unknown": "ℹ️",
+    }.get(state, "ℹ️")
+
+
+def _build_fact_rows(lang: str, detailed_report: Dict[str, Any], ai_result: Dict[str, Any]) -> List[Tuple[str, str, str]]:
+    labels = {
+        "ru": {
+            "company": "🏢 Компания",
+            "company_number": "🆔 Номер компании",
+            "registry": "🏛️ Реестр UK",
+            "company_status": "📌 Статус компании",
+            "country": "🌍 Страна / юрисдикция",
+            "email": "📧 Email работодателя",
+            "domain": "🌐 Проверка домена",
+            "address": "📍 Адрес из контракта",
+            "address_check": "🧭 Проверка адреса",
+            "contract": "📄 Данные контракта",
+        },
+        "tj": {
+            "company": "🏢 Ширкат",
+            "company_number": "🆔 Рақами ширкат",
+            "registry": "🏛️ Реестри UK",
+            "company_status": "📌 Ҳолати ширкат",
+            "country": "🌍 Кишвар / юрисдиксия",
+            "email": "📧 Email-и корфармо",
+            "domain": "🌐 Санҷиши домен",
+            "address": "📍 Суроға дар шартнома",
+            "address_check": "🧭 Санҷиши суроға",
+            "contract": "📄 Маълумоти шартнома",
+        },
+        "en": {
+            "company": "🏢 Company",
+            "company_number": "🆔 Company Number",
+            "registry": "🏛️ UK Registry",
+            "company_status": "📌 Company Status",
+            "country": "🌍 Country / Jurisdiction",
+            "email": "📧 Employer Email",
+            "domain": "🌐 Domain Check",
+            "address": "📍 Contract Address",
+            "address_check": "🧭 Address Check",
+            "contract": "📄 Contract Details",
+        },
+    }
+    text = {
+        "ru": {
+            "verified": "Подтверждена и активна",
+            "not_found": "Не найдена в UK registry",
+            "not_uk": "Не является UK-компанией",
+            "lookup_failed": "Официальная проверка временно недоступна",
+            "inactive": "Компания не активна",
+            "unknown": "Недостаточно данных",
+            "active": "active",
+            "missing": "Не указано",
+            "present": "Указано",
+            "matched": "Совпадает с проверочными данными",
+            "mismatch": "Не совпадает с проверочными данными",
+            "reference_missing": "Нет надёжного домена для сравнения",
+            "free_provider": "Используется бесплатный email-провайдер",
+            "email_missing": "Email отсутствует",
+            "website_match": "Email совпадает с доменом сайта в контракте",
+            "reference_match": "Email совпадает с опорным доменом",
+            "reference_mismatch": "Email не совпадает с опорным доменом",
+            "address_reference_missing": "Нет официального адреса для сравнения",
+            "contract_missing": "Часть данных контракта отсутствует",
+        },
+        "tj": {
+            "verified": "Тасдиқ шуд ва фаъол аст",
+            "not_found": "Дар UK registry ёфт нашуд",
+            "not_uk": "Ширкати UK нест",
+            "lookup_failed": "Санҷиши расмӣ муваққатан дастнорас аст",
+            "inactive": "Ширкат фаъол нест",
+            "unknown": "Маълумот нокифоя аст",
+            "active": "active",
+            "missing": "Нишон дода нашудааст",
+            "present": "Мавҷуд аст",
+            "matched": "Бо маълумоти санҷишӣ мувофиқ аст",
+            "mismatch": "Бо маълумоти санҷишӣ мувофиқ нест",
+            "reference_missing": "Барои муқоиса домени боэътимод нест",
+            "free_provider": "Провайдери ройгони email истифода шудааст",
+            "email_missing": "Email вуҷуд надорад",
+            "website_match": "Email бо домени сайт дар шартнома мувофиқ аст",
+            "reference_match": "Email бо домени санҷишӣ мувофиқ аст",
+            "reference_mismatch": "Email бо домени санҷишӣ мувофиқ нест",
+            "address_reference_missing": "Барои муқоиса суроғаи расмӣ нест",
+            "contract_missing": "Қисме аз маълумоти шартнома намерасад",
+        },
+        "en": {
+            "verified": "Verified and active",
+            "not_found": "Not found in the UK registry",
+            "not_uk": "Not a UK company",
+            "lookup_failed": "Official lookup is temporarily unavailable",
+            "inactive": "Company is not active",
+            "unknown": "Not enough data",
+            "active": "active",
+            "missing": "Not provided",
+            "present": "Present",
+            "matched": "Matches reference data",
+            "mismatch": "Does not match reference data",
+            "reference_missing": "No trusted reference domain available",
+            "free_provider": "Free email provider is being used",
+            "email_missing": "Email is missing",
+            "website_match": "Email matches the website domain from the contract",
+            "reference_match": "Email matches the reference domain",
+            "reference_mismatch": "Email does not match the reference domain",
+            "address_reference_missing": "No official address available for comparison",
+            "contract_missing": "Some contract fields are missing",
+        },
+    }
+
+    L = labels.get(lang, labels["en"])
+    T = text.get(lang, text["en"])
+
+    company_name = detailed_report.get("official_company_name") or ai_result.get("Company Name")
+    company_number = detailed_report.get("official_company_number") or ai_result.get("Company Number")
+    company_status = str(detailed_report.get("company_status") or "unknown").strip()
+    official_country = detailed_report.get("official_country")
+    official_jurisdiction = detailed_report.get("official_jurisdiction")
+    primary_email = _extract_primary_email(ai_result.get("Contact Details"))
+    email_domain = detailed_report.get("email_domain")
+    company_domain = detailed_report.get("company_domain")
+    contract_domain = detailed_report.get("contract_website_domain") or ai_result.get("Website Domain")
+    contract_address = ai_result.get("Registered Address")
+    contract_bits = [
+        str(ai_result.get("Contract Number") or "").strip(),
+        str(ai_result.get("Contract Date") or "").strip(),
+        str(contract_domain or "").strip(),
+    ]
+    contract_bits = [bit for bit in contract_bits if bit]
+
+    registry_state = "unknown"
+    registry_value = T["unknown"]
+    if detailed_report.get("company_verified"):
+        registry_state = "pass"
+        registry_value = T["verified"]
+    elif detailed_report.get("company_not_found"):
+        registry_state = "fail"
+        registry_value = T["not_found"]
+    elif detailed_report.get("company_not_uk"):
+        registry_state = "fail"
+        registry_value = T["not_uk"]
+    elif detailed_report.get("company_lookup_failed"):
+        registry_state = "warn"
+        registry_value = T["lookup_failed"]
+    elif company_status and company_status.lower() not in {"", "unknown", T["active"]}:
+        registry_state = "fail"
+        registry_value = T["inactive"]
+
+    status_state = "unknown"
+    status_value = company_status or "unknown"
+    if company_status.lower() == "active":
+        status_state = "pass"
+    elif company_status.lower() not in {"", "unknown"}:
+        status_state = "fail"
+
+    country_bits = [str(official_country or "").strip(), str(official_jurisdiction or "").strip()]
+    country_bits = [bit for bit in country_bits if bit]
+
+    email_state = "pass" if email_domain else "fail"
+    email_value = primary_email or email_domain or T["missing"]
+
+    domain_status = str(detailed_report.get("domain_status") or "").strip().lower()
+    website_domain_match = bool(detailed_report.get("website_domain_match"))
+    if domain_status == "matched":
+        domain_state = "pass"
+        suffix = f": {company_domain}" if company_domain else ""
+        domain_value = f"{T['reference_match']}{suffix}"
+    elif domain_status == "mismatch":
+        domain_state = "fail"
+        suffix = f": {company_domain}" if company_domain else ""
+        domain_value = f"{T['reference_mismatch']}{suffix}"
+    elif domain_status == "free_provider":
+        domain_state = "fail"
+        domain_value = T["free_provider"]
+    elif domain_status == "missing_email":
+        domain_state = "fail"
+        domain_value = T["email_missing"]
+    elif website_domain_match:
+        domain_state = "warn"
+        suffix = f": {contract_domain}" if contract_domain else ""
+        domain_value = f"{T['website_match']}{suffix}"
+    elif domain_status == "unavailable_reference":
+        domain_state = "warn"
+        domain_value = T["reference_missing"]
+    else:
+        domain_state = "unknown"
+        domain_value = T["unknown"]
+
+    address_present = bool(str(contract_address or "").strip())
+    address_state = "pass" if address_present else "fail"
+    address_value = contract_address or T["missing"]
+
+    address_status = str(detailed_report.get("address_status") or "").strip().lower()
+    if address_status == "matched":
+        address_check_state = "pass"
+        similarity = detailed_report.get("address_match_score")
+        suffix = f" ({similarity}%)" if similarity is not None else ""
+        address_check_value = f"{T['matched']}{suffix}"
+    elif address_status == "mismatch":
+        address_check_state = "fail"
+        similarity = detailed_report.get("address_match_score")
+        suffix = f" ({similarity}%)" if similarity is not None else ""
+        address_check_value = f"{T['mismatch']}{suffix}"
+    elif address_status == "missing":
+        address_check_state = "fail"
+        address_check_value = T["missing"]
+    elif address_status == "unavailable_reference":
+        address_check_state = "warn"
+        address_check_value = T["address_reference_missing"]
+    else:
+        address_check_state = "unknown"
+        address_check_value = T["unknown"]
+
+    contract_state = "pass" if len(contract_bits) >= 2 else "warn"
+    contract_value = " | ".join(contract_bits) if contract_bits else T["contract_missing"]
+
+    return [
+        (L["company"], _summary_value(company_name), "pass" if company_name else "fail"),
+        (L["company_number"], _summary_value(company_number), "pass" if company_number else "fail"),
+        (L["registry"], _summary_value(registry_value), registry_state),
+        (L["company_status"], _summary_value(status_value), status_state),
+        (L["country"], _summary_value(" | ".join(country_bits) if country_bits else T["missing"]), "pass" if country_bits else "unknown"),
+        (L["email"], _summary_value(email_value), email_state),
+        (L["domain"], _summary_value(domain_value), domain_state),
+        (L["address"], _summary_value(address_value, max_len=180), address_state),
+        (L["address_check"], _summary_value(address_check_value), address_check_state),
+        (L["contract"], _summary_value(contract_value, max_len=160), contract_state),
+    ]
+
+
 def _build_pretty_summary(
     lang: str,
     file_type: str,
@@ -829,9 +1105,9 @@ def _build_pretty_summary(
         'en': {'safe': "Safe — Reliable", 'warning': "Needs Attention", 'unsafe': "HIGH RISK", 'unknown': "Unknown"},
     }
     summary_labels = {
-        'ru': {'score': "⭐️ Балл", 'status': "🛡️ Статус", 'company': "🏢 Компания", 'domain': "🌐 Домен", 'summary': "📝 Итог", 'reasons': "⚠️ Причины"},
-        'tj': {'score': "⭐️ Балл", 'status': "🛡️ Ҳолат", 'company': "🏢 Ширкат", 'domain': "🌐 Домен", 'summary': "📝 Хулоса", 'reasons': "⚠️ Сабабҳо"},
-        'en': {'score': "⭐️ Score", 'status': "🛡️ Risk Level", 'company': "🏢 Company", 'domain': "🌐 Domain", 'summary': "📝 Summary", 'reasons': "⚠️ Reasons"},
+        'ru': {'score': "⭐️ Балл", 'status': "🛡️ Статус", 'company': "🏢 Компания", 'domain': "🌐 Домен", 'summary': "📝 Итог", 'reasons': "⚠️ Причины", 'checks': "10 ключевых проверок"},
+        'tj': {'score': "⭐️ Балл", 'status': "🛡️ Ҳолат", 'company': "🏢 Ширкат", 'domain': "🌐 Домен", 'summary': "📝 Хулоса", 'reasons': "⚠️ Сабабҳо", 'checks': "10 санҷиши асосӣ"},
+        'en': {'score': "⭐️ Score", 'status': "🛡️ Risk Level", 'company': "🏢 Company", 'domain': "🌐 Domain", 'summary': "📝 Summary", 'reasons': "⚠️ Reasons", 'checks': "10 Key Checks"},
     }
 
     L = summary_labels.get(lang, summary_labels['en'])
@@ -844,7 +1120,7 @@ def _build_pretty_summary(
     reasons = _localized_reasons(detailed_report, lang)
     explanation = _localize_report_explanation(detailed_report.get("explanation"), lang)
     company_name = _summary_value(detailed_report.get('official_company_name') or ai_result.get('Company Name'))
-    domain_val = _summary_value(detailed_report.get('company_domain') or ai_result.get('Website Domain'), max_len=80)
+    fact_rows = _build_fact_rows(lang, detailed_report, ai_result)
 
     lines = [
         f"🛡️ <b>{L['status']}:</b> {icon} {html.escape(status_label)}",
@@ -852,8 +1128,10 @@ def _build_pretty_summary(
         f"{L['company']} <code>{company_name}</code>",
         f"{L['score']}: <b>{total_score}/100</b>",
     ]
-    if domain_val != "—":
-        lines.append(f"{L['domain']}: <code>{domain_val}</code>")
+
+    lines.extend(["", f"<b>{html.escape(L['checks'])}</b>"])
+    for label, value, state in fact_rows:
+        lines.append(f"{_fact_icon(state)} <b>{label}:</b> {value}")
 
     if explanation:
         lines.extend(["", f"{L['summary']}:", html.escape(explanation)])
@@ -1004,7 +1282,7 @@ async def handle_photo(message: types.Message):
 
         file_data = await bot.download_file(file.file_path)
 
-        png_path = os.path.join(FILES_DIR, f"{user_id}_temp_image.png")
+        png_path = os.path.join(FILES_DIR, f"{user_id}_temp_image_{uuid.uuid4().hex}.png")
         try:
             img = Image.open(io.BytesIO(file_data))
             img = img.convert("RGB")  
@@ -1100,7 +1378,7 @@ async def handle_document(message: types.Message):
     try:
         file_info = await bot.get_file(message.document.file_id)
         file_data = await bot.download_file(file_info.file_path)
-        temp_path = os.path.join(FILES_DIR, f"{user_id}_doc_temp{Path(file_name).suffix}")
+        temp_path = os.path.join(FILES_DIR, f"{user_id}_doc_temp_{uuid.uuid4().hex}{Path(file_name).suffix}")
         async with aiofiles.open(temp_path, 'wb') as f:
             await f.write(file_data)
 
@@ -1110,7 +1388,7 @@ async def handle_document(message: types.Message):
         if is_image:
             try:
                 img = Image.open(temp_path)
-                final_path = os.path.join(FILES_DIR, f"{user_id}_converted.png")
+                final_path = os.path.join(FILES_DIR, f"{user_id}_converted_{uuid.uuid4().hex}.png")
                 img.convert("RGB").save(final_path, "PNG")
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
@@ -1253,6 +1531,13 @@ async def process_contract_text(
         try:
             ai_result = await asyncio.wait_for(ai.get_answer_json_dict(), timeout=70.0)
         except asyncio.TimeoutError:
+            _log_ai_usage(
+                user_id=user_id,
+                file_type=file_type,
+                stage="ai_timeout",
+                diagnostics=ai.get_diagnostics(),
+                error="AI analysis timeout",
+            )
             timeout_texts = {
                 'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 AI-\u0430\u043d\u0430\u043b\u0438\u0437\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u043f\u043e\u0437\u0436\u0435.",
                 'tj': "\u274c Вақти таҳлили AI ба охир расид. Баъдтар кӯшиш кунед.",
@@ -1262,6 +1547,13 @@ async def process_contract_text(
             return
 
         if not ai_result or not isinstance(ai_result, dict):
+            _log_ai_usage(
+                user_id=user_id,
+                file_type=file_type,
+                stage="ai_invalid_result",
+                diagnostics=ai.get_diagnostics(),
+                error="AI returned invalid result",
+            )
             failed_texts = {
                 'ru': "\u274c \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0438\u0437\u0432\u043b\u0435\u0447\u044c \u0434\u0430\u043d\u043d\u044b\u0435 \u0438\u0437 \u0442\u0435\u043a\u0441\u0442\u0430.",
                 'tj': "\u274c Маълумоти лозима аз матн гирифта нашуд.",
@@ -1270,10 +1562,19 @@ async def process_contract_text(
             await bot.send_message(message.chat.id, failed_texts.get(user_lang, failed_texts['en']))
             return
 
+        ai_result = ai.merge_heuristic_gaps_into_result(ai_result)
+
         try:
             async with AsyncCheckAnalysisContract(ai_result, raw_contract_text=contract_text) as analysis:
                 detailed_report = await asyncio.wait_for(analysis.get_detailed_report(), timeout=45.0)
         except asyncio.TimeoutError:
+            _log_ai_usage(
+                user_id=user_id,
+                file_type=file_type,
+                stage="verification_timeout",
+                diagnostics=ai.get_diagnostics(),
+                error="Company verification timeout",
+            )
             verify_timeout = {
                 'ru': "\u274c \u0422\u0430\u0439\u043c\u0430\u0443\u0442 \u044d\u0442\u0430\u043f\u0430 \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0438.",
                 'tj': "\u274c Вақти марҳилаи санҷиши ширкат ба охир расид.",
@@ -1281,6 +1582,19 @@ async def process_contract_text(
             }
             await bot.send_message(message.chat.id, verify_timeout.get(user_lang, verify_timeout['en']))
             return
+
+        ai_diagnostics = ai.get_diagnostics()
+        _log_ai_usage(
+            user_id=user_id,
+            file_type=file_type,
+            stage="success",
+            diagnostics=ai_diagnostics,
+        )
+        detailed_report["ai_diagnostics"] = ai_diagnostics
+        if isinstance(detailed_report.get("detailed_scores"), dict):
+            detailed_report["detailed_scores"]["AI Provider"] = ai_diagnostics.get("successful_provider")
+            detailed_report["detailed_scores"]["AI Model"] = ai_diagnostics.get("successful_model")
+            detailed_report["detailed_scores"]["AI Fallback Used"] = ai_diagnostics.get("fallback_used")
 
         identity_score = detailed_report.get("identity_score", detailed_report.get("total_score", 0))
         risk_level = detailed_report.get("risk_level", detailed_report.get("status", "unknown"))
@@ -1311,6 +1625,8 @@ async def process_contract_text(
                         'website_domain': ai_result.get('Website Domain'),
                         'contact_email': None,
                         'phone_number': None,
+                        'country': detailed_report.get("official_country"),
+                        'jurisdiction': detailed_report.get("official_jurisdiction"),
                         'incorporation_date': detailed_report.get("incorporation_date"),
                     }
                     company_id = await add_company(payload)
@@ -1324,6 +1640,8 @@ async def process_contract_text(
                     'website_domain': ai_result.get('Website Domain'),
                     'contact_email': None,
                     'phone_number': None,
+                    'country': detailed_report.get("official_country"),
+                    'jurisdiction': detailed_report.get("official_jurisdiction"),
                 }
                 company_id = await add_company(payload)
         except Exception as e:
@@ -1400,6 +1718,12 @@ async def process_contract_text(
             disable_web_page_preview=True,
         )
     except Exception as e:
+        _log_ai_usage(
+            user_id=user_id,
+            file_type=file_type,
+            stage="process_contract_text_exception",
+            error=str(e),
+        )
         print(f"process_contract_text fatal error: {e}")
         fail_texts = {
             'ru': "\u274c \u0421\u0438\u0441\u0442\u0435\u043c\u043d\u0430\u044f \u043e\u0448\u0438\u0431\u043a\u0430 \u0432\u043e \u0432\u0440\u0435\u043c\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438.",
@@ -1560,6 +1884,8 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
             'contract_date': "📋 <b>Дата договора:</b>",
             'website': "🌐 <b>Веб-сайт:</b>",
             'detailed_scores': "<b>Детальная оценка</b>",
+            'summary_title': "📝 <b>Итог:</b>",
+            'issues_title': "⚠️ <b>Ключевые причины:</b>",
             'no_value': "—"
         },
         'tj': {
@@ -1572,6 +1898,8 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
             'contract_date': "📋 <b>Санаи шартнома:</b>",
             'website': "🌐 <b>Веб-сайт:</b>",
             'detailed_scores': "<b>Ҳисоботи муфассал</b>",
+            'summary_title': "📝 <b>Хулоса:</b>",
+            'issues_title': "⚠️ <b>Сабабҳои асосӣ:</b>",
             'no_value': "—"
         },
         'en': {
@@ -1584,6 +1912,8 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
             'contract_date': "📋 <b>Contract Date:</b>",
             'website': "🌐 <b>Website:</b>",
             'detailed_scores': "<b>Verification Details</b>",
+            'summary_title': "📝 <b>Summary:</b>",
+            'issues_title': "⚠️ <b>Key Issues:</b>",
             'no_value': "—"
         }
     }
@@ -1618,84 +1948,54 @@ async def show_report_page(chat_id: int, user_id: int, page: int, lang: str):
                 detailed_scores = ast.literal_eval(detailed_scores)
             except Exception:
                 detailed_scores = {}
-
-
-
-
-    report_checks = {
-        'ru': [
-            ("Номер договора", 10),
-            ("Номер компании", 20),
-            ("Название компании", 15),
-            ("Проверка UK реестра", 15),
-            ("Совпадение названия", 10),
-            ("Совпадение адреса", 10),
-            ("Наличие email работодателя", 5),
-            ("Совпадение домена", 5),
-            ("Подозрительные совпадения", 5),
-            ("Дата договора", 5),
-        ],
-        'tj': [
-            ("Рақами шартнома", 10),
-            ("Рақами ширкат", 20),
-            ("Номи ширкат", 15),
-            ("Санҷиши UK registry", 15),
-            ("Мувофиқати ном", 10),
-            ("Мувофиқати суроға", 10),
-            ("Ҳузури email корфармо", 5),
-            ("Мувофиқати домен", 5),
-            ("Мувофиқати шубҳанок", 5),
-            ("Санаи шартнома", 5),
-        ],
-        'en': [
-            ("Contract Number", 10),
-            ("Company Number", 20),
-            ("Company Name", 15),
-            ("UK Registry Verification", 15),
-            ("Name Match", 10),
-            ("Address Match", 10),
-            ("Employer Email Present", 5),
-            ("Domain Match", 5),
-            ("Suspicious Identity Match", 5),
-            ("Contract Date", 5),
-        ],
+    ai_result_for_report = {
+        "Company Name": check.get("extracted_company_name"),
+        "Company Number": check.get("extracted_company_number"),
+        "Registered Address": check.get("extracted_address"),
+        "Website Domain": check.get("website_domain"),
+        "Contract Number": check.get("contract_number"),
+        "Contract Date": check.get("contract_date"),
+        "Contact Details": "",
     }
+    if detailed_scores.get("Email Domain"):
+        ai_result_for_report["Contact Details"] = detailed_scores.get("Email Domain")
 
-    checks = report_checks.get(lang, report_checks['en'])
+    fact_rows = _build_fact_rows(lang, {**check, **{
+        "official_company_name": detailed_scores.get("Official Company Name"),
+        "official_company_number": detailed_scores.get("Official Company Number"),
+        "company_verified": detailed_scores.get("Company Verified"),
+        "company_not_found": "company_not_found" in (detailed_scores.get("Risk Flags") or []),
+        "company_not_uk": "company_not_uk" in (detailed_scores.get("Risk Flags") or []),
+        "company_lookup_failed": detailed_scores.get("Company Lookup Failed"),
+        "company_status": detailed_scores.get("Company Status"),
+        "official_country": detailed_scores.get("Official Country"),
+        "official_jurisdiction": detailed_scores.get("Official Jurisdiction"),
+        "email_domain": detailed_scores.get("Email Domain"),
+        "company_domain": detailed_scores.get("Company Domain"),
+        "domain_status": detailed_scores.get("Domain Status"),
+        "contract_website_domain": detailed_scores.get("Contract Website Domain"),
+        "website_domain_match": detailed_scores.get("Email Website Match"),
+        "address_status": detailed_scores.get("Address Status"),
+        "address_match_score": detailed_scores.get("Address Similarity"),
+    }}, ai_result_for_report)
+
     details_lines = [L['detailed_scores'], ""]
+    for label, value, state in fact_rows:
+        details_lines.append(f"{_fact_icon(state)} <b>{label}:</b> {value}")
 
-    contract_number_ok = bool(check.get('contract_number'))
-    company_number_ok = bool(detailed_scores.get("Official Company Number"))
-    company_name_ok = bool(check.get('extracted_company_name') or check.get('company_name'))
-    uk_verified_ok = bool(detailed_scores.get("Company UK Match")) if detailed_scores.get("Company UK Match") is not None else False
-    name_match_ok = bool(detailed_scores.get("Company Name Matches Official Record")) if detailed_scores.get("Company Name Matches Official Record") is not None else False
-    address_match_ok = bool(detailed_scores.get("Address Match")) if detailed_scores.get("Address Match") is not None else False
-    email_present_ok = not bool(detailed_scores.get("Email Missing"))
-    domain_match_ok = bool(detailed_scores.get("Domain Match")) if detailed_scores.get("Domain Match") is not None else False
-    suspicious_ok = not bool(detailed_scores.get("Suspicious Identity Match"))
-    contract_date_ok = bool(check.get('contract_date'))
-
-    status_flags = [
-        contract_number_ok,
-        company_number_ok,
-        company_name_ok,
-        uk_verified_ok,
-        name_match_ok,
-        address_match_ok,
-        email_present_ok,
-        domain_match_ok,
-        suspicious_ok,
-        contract_date_ok,
-    ]
-
-    for (label, points), is_ok in zip(checks, status_flags):
-        mark = "✅" if is_ok else "🔴"
-        got = points if is_ok else 0
-        details_lines.append(f"{mark} <b>{label}:</b> <code>{got}/{points}</code>")
-
+    reasons = _localized_reasons(
+        {
+            "reason_codes": check.get("reason_codes") or detailed_scores.get("Reason Codes") or detailed_scores.get("Risk Flags") or [],
+            "reason": detailed_scores.get("Reasons") or [],
+        },
+        lang,
+    )
     explanation = _localize_report_explanation(detailed_scores.get("Explanation"), lang)
     if explanation:
-        details_lines.extend(["", f"📝 <b>Summary:</b>", html.escape(explanation)])
+        details_lines.extend(["", L['summary_title'], html.escape(explanation)])
+    if reasons and _normalize_status_category(safety_rating) != "safe":
+        details_lines.extend(["", L['issues_title']])
+        details_lines.extend(f"• {html.escape(reason)}" for reason in reasons[:6])
 
     details_text = "\n".join(details_lines)
     full_text = header_text + "\n" + details_text

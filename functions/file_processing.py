@@ -24,7 +24,11 @@ import io
 import uuid
 
 
-
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
 
 
 class ProfessionalOCRProcessor:
@@ -110,14 +114,18 @@ class ProfessionalOCRProcessor:
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
         )
+        if self.logger.handlers:
+            for handler in list(self.logger.handlers):
+                try:
+                    handler.close()
+                finally:
+                    self.logger.removeHandler(handler)
         file_handler = logging.FileHandler(self.LOG_FILE, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(formatter)
-        if self.logger.handlers:
-            self.logger.handlers.clear()
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
 
@@ -774,7 +782,11 @@ class FileConvertToText:
         self.logger = logging.getLogger("FileConvertToText")
         self.logger.setLevel(logging.ERROR)
         if self.logger.handlers:
-            self.logger.handlers.clear()
+            for handler in list(self.logger.handlers):
+                try:
+                    handler.close()
+                finally:
+                    self.logger.removeHandler(handler)
         handler = logging.FileHandler(self.LOG_FILE, encoding="utf-8")
         handler.setLevel(logging.ERROR)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -918,6 +930,31 @@ class FileConvertToText:
         native_text = "\n\n".join([p for p in native_pages if p]).strip()
         need_ocr_for_all_pages = not native_pages or self._is_text_garbage(native_text)
 
+        # Stable extraction: if the PDF already has enough selectable text, do not merge
+        # OCR output (OCR is slower and can flip scam keyword detection on mixed layouts).
+        min_native = _env_int("PDF_PREFER_NATIVE_MIN_CHARS", 350)
+        if (
+            native_text
+            and not self._is_text_garbage(native_text)
+            and len(native_text.strip()) >= min_native
+        ):
+            self.logger.info(
+                "Using native PDF text only (%s chars >= %s); skipping OCR merge for stability.",
+                len(native_text.strip()),
+                min_native,
+            )
+            return {
+                "status": "success",
+                "text": native_text,
+                "metadata": {
+                    "page_count": page_count or len(native_pages),
+                    "source": "native_pdf_only",
+                    "ocr_pages": 0,
+                    "avg_confidence": 0.0,
+                    "skipped_ocr_reason": "substantial_native_text",
+                },
+            }
+
         ocr_text_by_page: Dict[int, str] = {}
         ocr_confidences: List[float] = []
 
@@ -1051,18 +1088,47 @@ class FileConvertToText:
                 else:
                     raise ValueError("Unsupported")
 
+                narrative_chunks = []
+                preferred_columns = {
+                    "contract_text",
+                    "contract",
+                    "text",
+                    "content",
+                    "agreement_text",
+                }
+                matched_columns = [
+                    col for col in df.columns
+                    if str(col).strip().lower() in preferred_columns
+                ]
+                if matched_columns:
+                    for col in matched_columns:
+                        for value in df[col].astype(str).tolist():
+                            cleaned = str(value).strip()
+                            if cleaned:
+                                narrative_chunks.append(cleaned)
+                else:
+                    for _, row in df.iterrows():
+                        for value in row.tolist():
+                            cleaned = str(value).strip()
+                            if len(cleaned) >= 160:
+                                narrative_chunks.append(cleaned)
+
+                narrative_text = "\n\n".join(dict.fromkeys(narrative_chunks))
+
                 lines = []
                 header = " | ".join(df.columns.astype(str))
                 lines.append(header)
                 lines.append("-|-".join(["-" * len(col) for col in df.columns.astype(str)]))
                 for _, row in df.iterrows():
                     lines.append(" | ".join(str(cell) for cell in row))
-                
-                text = "\n".join(lines)
+
+                table_text = "\n".join(lines)
+                text = f"{narrative_text}\n\n{table_text}".strip() if narrative_text else table_text
                 metadata = {
                     "row_count": len(df),
                     "column_count": len(df.columns),
-                    "columns": list(df.columns)
+                    "columns": list(df.columns),
+                    "narrative_chunks": len(narrative_chunks),
                 }
                 return {"status": "success", "text": text, "metadata": metadata}
             except Exception as e:

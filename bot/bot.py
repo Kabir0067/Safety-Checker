@@ -9,7 +9,24 @@ BOT_TOKEN = settings.BOT_API or os.getenv("BOT_API")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_API is not configured. Set BOT_API in your .env file.")
 
-bot = AsyncTeleBot(BOT_TOKEN)
+class ResilientAsyncTeleBot(AsyncTeleBot):
+    async def send_message(self, chat_id, text, *args, **kwargs):
+        try:
+            return await super().send_message(chat_id, text, *args, **kwargs)
+        except Exception as exc:
+            err = str(exc).lower()
+            # Prevent parser-related crashes from breaking the request flow.
+            if any(token in err for token in ["parse", "can't parse entities", "entity"]):
+                safe_kwargs = dict(kwargs)
+                safe_kwargs.pop("parse_mode", None)
+                try:
+                    return await super().send_message(chat_id, text, *args, **safe_kwargs)
+                except Exception:
+                    return await super().send_message(chat_id, "⚠️ Error formatting output. Please try again.")
+            raise
+
+
+bot = ResilientAsyncTeleBot(BOT_TOKEN)
 UTC = datetime.timezone.utc
 pending_feedback = set()
 user_state = {}

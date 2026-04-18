@@ -25,6 +25,8 @@ class Company(Base):
     website_domain = Column(String(255))
     contact_email = Column(String(255))
     phone_number = Column(String(50))
+    country = Column(String(100))
+    jurisdiction = Column(String(100))
     incorporation_date = Column(Date)
     last_updated = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())

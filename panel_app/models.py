@@ -28,6 +28,8 @@ class Company(models.Model):
     website_domain = models.CharField(max_length=255, null=True, blank=True)
     contact_email = models.CharField(max_length=255, null=True, blank=True)
     phone_number = models.CharField(max_length=50, null=True, blank=True)
+    country = models.CharField(max_length=100, null=True, blank=True)
+    jurisdiction = models.CharField(max_length=100, null=True, blank=True)
     last_updated = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(null=True, blank=True)
 
@@ -121,4 +123,3 @@ class SuspiciousCompany(models.Model):
 
     def __str__(self) -> str:
         return self.company_name
-

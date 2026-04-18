@@ -77,6 +77,23 @@ GEMINI_FREE_MODEL_CANDIDATES = [
     "gemini-2.0-flash-lite",
 ]
 
+GROQ_FREE_TIER_MODEL_CANDIDATES = [
+    "llama-3.1-8b-instant",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3-32b",
+    "llama-3.3-70b-versatile",
+]
+
+OPENROUTER_FREE_MODEL_CANDIDATES = [
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "openai/gpt-oss-20b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-3-12b-it:free",
+    "google/gemma-3-4b-it:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
+]
+
 # OpenAI-compatible schema (Groq, OpenRouter) — uses json_object mode
 OUTPUT_SCHEMA: Dict[str, Any] = {
     "type": "object",
@@ -154,6 +171,11 @@ class AsyncAiProcessing:
     def __init__(self, contract: str):
         self.contract = contract or ""
         self.logger = _build_logger()
+        self.provider_attempts: List[Dict[str, Any]] = []
+        self.last_success_provider: Optional[str] = None
+        self.last_success_model: Optional[str] = None
+        self.fallback_used = False
+        self.free_only_mode = str(os.getenv("AI_FREE_ONLY", "1")).strip().lower() not in {"0", "false", "no", "off"}
 
         self.gemini_api_key = os.getenv("GEMINI_AI_API_KEY") or os.getenv("GEMINI_API_KEY")
         self.groq_api_key = os.getenv("GROQ_AI_API_KEY") or os.getenv("GROQ_API_KEY")
@@ -204,6 +226,40 @@ class AsyncAiProcessing:
     def _gemini_direct_candidates(self) -> List[str]:
         env_candidates = self._env_model_candidates("GEMINI_MODEL", "GEMINI_MODELS", "AI_GEMINI_MODELS")
         return self._dedupe_models(env_candidates + GEMINI_FREE_MODEL_CANDIDATES)
+
+    def _groq_direct_candidates(self) -> List[str]:
+        env_candidates = self._env_model_candidates("GROQ_MODEL", "GROQ_MODELS", "AI_GROQ_MODELS")
+        return self._dedupe_models(env_candidates + GROQ_FREE_TIER_MODEL_CANDIDATES)
+
+    def _openrouter_direct_candidates(self) -> List[str]:
+        env_candidates = self._env_model_candidates("OPENROUTER_MODEL", "OPENROUTER_MODELS", "AI_OPENROUTER_MODELS")
+        return self._dedupe_models(env_candidates + OPENROUTER_FREE_MODEL_CANDIDATES)
+
+    def _filter_models_for_mode(self, provider: Provider, models: List[str]) -> List[str]:
+        deduped = self._dedupe_models(models)
+        if not self.free_only_mode:
+            return deduped
+
+        if provider.name == "gemini":
+            allow = {candidate.split("/")[-1] for candidate in self._gemini_direct_candidates()}
+            return [model for model in deduped if model.split("/")[-1] in allow]
+
+        if provider.name == "groq":
+            allow = {candidate.split("/")[-1] for candidate in self._groq_direct_candidates()}
+            return [model for model in deduped if model.split("/")[-1] in allow]
+
+        if provider.name == "openrouter":
+            explicit = {candidate for candidate in self._openrouter_direct_candidates()}
+            filtered = []
+            for model in deduped:
+                if model in explicit:
+                    filtered.append(model)
+                    continue
+                if model.endswith(":free"):
+                    filtered.append(model)
+            return filtered
+
+        return deduped
 
     # -----------------------------
     # Session
@@ -284,7 +340,7 @@ class AsyncAiProcessing:
                     url = f"{self.gemini_base}?key={self.gemini_api_key}"
                     async with session.get(url) as r:
                         if r.status == 403:
-                            fallback_models = self._gemini_direct_candidates()
+                            fallback_models = self._filter_models_for_mode(provider, self._gemini_direct_candidates())
                             self.logger.warning(
                                 "Gemini model list returned HTTP 403; using direct free Gemini candidates: %s",
                                 ", ".join(fallback_models),
@@ -292,7 +348,7 @@ class AsyncAiProcessing:
                             self._models_cache[provider.name] = (time.time() + min(self._ttl, 300), fallback_models)
                             return fallback_models
                         if r.status != 200:
-                            fallback_models = self._gemini_direct_candidates()
+                            fallback_models = self._filter_models_for_mode(provider, self._gemini_direct_candidates())
                             self.logger.warning(
                                 "Gemini models list failed: %s; using direct free Gemini candidates.",
                                 r.status,
@@ -305,7 +361,7 @@ class AsyncAiProcessing:
                         methods = m.get("supportedGenerationMethods", []) or []
                         if name and "generateContent" in methods:
                             models.append(name)
-                    models = self._dedupe_models(self._gemini_direct_candidates() + models)
+                    models = self._filter_models_for_mode(provider, self._gemini_direct_candidates() + models)
 
                 elif provider.name == "groq":
                     if not self.groq_api_key:
@@ -321,6 +377,7 @@ class AsyncAiProcessing:
                         mid = m.get("id")
                         if mid:
                             models.append(str(mid))
+                    models = self._filter_models_for_mode(provider, self._groq_direct_candidates() + models)
 
                 elif provider.name == "openrouter":
                     url = f"{self.openrouter_base}/models"
@@ -336,6 +393,7 @@ class AsyncAiProcessing:
                         mid = m.get("id")
                         if mid:
                             models.append(str(mid))
+                    models = self._filter_models_for_mode(provider, self._openrouter_direct_candidates() + models)
 
                 self._models_cache[provider.name] = (time.time() + self._ttl, models)
                 return models
@@ -351,13 +409,7 @@ class AsyncAiProcessing:
 
         models = await self._get_models(provider)
         if provider.name == "gemini":
-            priority = [
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.0-flash",
-                "gemini-1.5-flash",
-                "gemini-pro",
-            ]
+            priority = self._gemini_direct_candidates() + ["gemini-1.5-flash"]
             stable = [m for m in models if "preview" not in m and "-exp" not in m]
             for p in priority:
                 for m in stable:
@@ -371,46 +423,31 @@ class AsyncAiProcessing:
             return None
 
         if provider.name == "groq":
-            priority = [
-                "llama-3.3-70b-versatile",
-                "llama-3.1-70b-versatile",
-                "llama-3.1-8b-instant",
-                "mixtral-8x7b-32768",
-                "gemma2-9b-it",
-            ]
+            priority = self._groq_direct_candidates()
             normalized = [m.split("/")[-1] for m in models]
             for p in priority:
-                if p in normalized:
+                normalized_p = p.split("/")[-1]
+                if normalized_p in normalized:
                     return p
             if normalized:
-                return normalized[0]
-            return "llama-3.1-8b-instant"
+                return models[0]
+            return self._groq_direct_candidates()[0] if self._groq_direct_candidates() else None
 
         if provider.name == "openrouter":
-            priority = [
-                "google/gemini-2.5-flash-lite",
-                "google/gemini-2.5-flash",
-                "meta-llama/llama-3.3-70b-instruct",
-                "mistralai/mistral-large",
-            ]
+            priority = self._openrouter_direct_candidates()
             if models:
                 for p in priority:
                     if p in models:
                         return p
-            return "openrouter/auto"
+                return models[0]
+            return self._openrouter_direct_candidates()[0] if self._openrouter_direct_candidates() else None
 
         return None
 
     async def _candidate_models(self, provider: Provider) -> List[str]:
         if provider.name == "gemini":
-            models = await self._get_models(provider)
-            priority = self._gemini_direct_candidates() + [
-                "gemini-2.5-flash",
-                "gemini-2.5-flash-lite",
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-lite",
-                "gemini-1.5-flash",
-            ]
+            models = self._filter_models_for_mode(provider, await self._get_models(provider))
+            priority = self._gemini_direct_candidates() + ["gemini-1.5-flash"]
 
             stable = [m for m in models if "preview" not in m and "-exp" not in m]
             ordered: List[str] = []
@@ -421,7 +458,25 @@ class AsyncAiProcessing:
                 ordered.append(wanted)
             ordered.extend(stable)
             ordered.extend(models)
-            return self._dedupe_models(ordered)
+            return self._filter_models_for_mode(provider, self._dedupe_models(ordered))
+
+        models = self._filter_models_for_mode(provider, await self._get_models(provider))
+        if provider.name == "groq":
+            priority = self._groq_direct_candidates()
+            ordered: List[str] = []
+            for wanted in priority:
+                normalized_wanted = wanted.split("/")[-1]
+                for model in models:
+                    if model.split("/")[-1] == normalized_wanted:
+                        ordered.append(model)
+                ordered.append(wanted)
+            ordered.extend(models)
+            return self._filter_models_for_mode(provider, self._dedupe_models(ordered))
+
+        if provider.name == "openrouter":
+            priority = self._openrouter_direct_candidates()
+            ordered = priority + models
+            return self._filter_models_for_mode(provider, self._dedupe_models(ordered))
 
         picked = await self._pick_model(provider)
         return [picked] if picked else []
@@ -429,6 +484,8 @@ class AsyncAiProcessing:
     def _fallback_extract_from_text(self) -> Optional[Dict[str, Any]]:
         text = self.contract or ""
         if len(text.strip()) < 30:
+            return None
+        if not self._looks_like_contract_input(text):
             return None
 
         data: Dict[str, Any] = {k: None for k in OUTPUT_SCHEMA["required"]}
@@ -453,6 +510,35 @@ class AsyncAiProcessing:
         data["Suspicious Phrases Found"] = suspicious
         data["Text Style"] = "unprofessional" if suspicious else "professional"
         return self._normalize_output(data)
+
+    def _looks_like_contract_input(self, text: str) -> bool:
+        raw = str(text or "").strip()
+        if len(raw) < 80:
+            return False
+
+        lowered = raw.lower()
+        strong_markers = [
+            "employment agreement",
+            "contract reference",
+            "company no",
+            "registered office",
+            "governing law",
+            "term and termination",
+            "position and duties",
+            "salary",
+            "employee",
+            "employer",
+        ]
+        marker_hits = sum(1 for marker in strong_markers if marker in lowered)
+        if marker_hits >= 2:
+            return True
+
+        # Secondary check: at least two identity-like signals in the same text.
+        has_email = bool(re.search(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", raw))
+        has_uk_number = bool(re.search(r"\b[A-Z0-9]{6,10}\b", raw))
+        has_date = bool(re.search(r"\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\s+[A-Za-z]+\s+\d{4}\b", raw))
+        has_domain = bool(re.search(r"\b[a-z0-9.-]+\.[a-z]{2,}\b", lowered))
+        return sum([has_email, has_uk_number, has_date, has_domain]) >= 2
 
     # -----------------------------
     # Core request helpers
@@ -981,21 +1067,40 @@ class AsyncAiProcessing:
     def _is_valid_result(self, result: Optional[Dict[str, Any]]) -> bool:
         if not result:
             return False
-        primary_keys = ["Company Name", "Company Number", "Contract Number", "Website Domain", "Contract Date"]
-        if any(result.get(k) for k in primary_keys):
-            return True
+
+        # Guard against "instant random" outputs:
+        # require a minimum amount of structured evidence, not a single field.
+        core_keys = ["Company Name", "Company Number", "Contract Number", "Website Domain", "Contract Date"]
         secondary_keys = ["Contact Details", "Registered Address", "Responsible Person Full Name"]
-        return any(result.get(k) for k in secondary_keys) or bool(result.get("Suspicious Phrases Found"))
+        suspicious = bool(result.get("Suspicious Phrases Found"))
+
+        core_count = sum(1 for k in core_keys if result.get(k))
+        secondary_count = sum(1 for k in secondary_keys if result.get(k))
+
+        if core_count >= 2:
+            return True
+        if core_count >= 1 and secondary_count >= 1:
+            return True
+        if suspicious and (core_count + secondary_count) >= 2:
+            return True
+        return False
 
     # -----------------------------
     # Public API
     # -----------------------------
     async def get_answer_json_dict(self) -> Optional[Dict[str, Any]]:
         providers = [Provider("gemini"), Provider("groq"), Provider("openrouter")]
+        self.provider_attempts = []
+        self.last_success_provider = None
+        self.last_success_model = None
+        self.fallback_used = False
 
         for p in providers:
             models = await self._candidate_models(p)
             if not models:
+                self.provider_attempts.append(
+                    {"provider": p.name, "model": None, "status": "skipped_no_models"}
+                )
                 continue
 
             for model in models:
@@ -1004,16 +1109,67 @@ class AsyncAiProcessing:
                 else:
                     res = await self._call_openai_compatible(p, model)
 
-                if self._is_valid_result(res):
+                is_valid = self._is_valid_result(res)
+                self.provider_attempts.append(
+                    {
+                        "provider": p.name,
+                        "model": model,
+                        "status": "success" if is_valid else "invalid_or_failed",
+                    }
+                )
+                if is_valid:
+                    self.last_success_provider = p.name
+                    self.last_success_model = model
                     return res
 
         fallback = self._fallback_extract_from_text()
         if self._is_valid_result(fallback):
             self.logger.warning("AI providers unavailable; local fallback extractor used.")
+            self.fallback_used = True
+            self.last_success_provider = "local_fallback"
+            self.last_success_model = "heuristic_extractor"
+            self.provider_attempts.append(
+                {
+                    "provider": "local_fallback",
+                    "model": "heuristic_extractor",
+                    "status": "success",
+                }
+            )
             return fallback
 
         self.logger.error("All providers failed (no valid result).")
         return None
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        return {
+            "free_only_mode": self.free_only_mode,
+            "successful_provider": self.last_success_provider,
+            "successful_model": self.last_success_model,
+            "fallback_used": self.fallback_used,
+            "attempts": list(self.provider_attempts),
+        }
+
+    def merge_heuristic_gaps_into_result(self, data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        After a successful model response, fill only empty fields using the same
+        regex heuristics as the offline fallback so registry numbers/names stay
+        stable when the model output is incomplete.
+        """
+        if not data or not isinstance(data, dict):
+            return data
+        fb = self._fallback_extract_from_text()
+        if not fb:
+            return data
+        for key in OUTPUT_SCHEMA["required"]:
+            if key == "Suspicious Phrases Found":
+                continue
+            cur = data.get(key)
+            is_empty = cur is None or cur == ""
+            if isinstance(cur, list) and not cur:
+                is_empty = True
+            if is_empty and fb.get(key) not in (None, "", []):
+                data[key] = fb[key]
+        return self._normalize_output(data)
 
     async def process_multiple_contracts(self, contracts: List[str]) -> List[Optional[Dict[str, Any]]]:
         max_conc = int(os.getenv("AI_MAX_CONCURRENCY", "3") or "3")

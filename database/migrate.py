@@ -24,6 +24,8 @@ EXPECTED_COLUMNS = {
         "website_domain": "VARCHAR(255)",
         "contact_email": "VARCHAR(255)",
         "phone_number": "VARCHAR(50)",
+        "country": "VARCHAR(100)",
+        "jurisdiction": "VARCHAR(100)",
         "incorporation_date": "DATE",
         "last_updated": "TIMESTAMP",
         "created_at": "TIMESTAMP",

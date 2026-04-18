@@ -99,6 +99,8 @@ async def add_company(data: Dict[str, Any]) -> Optional[int]:
         "website_domain": _clean_optional_string(data.get("website_domain")),
         "contact_email": _clean_optional_string(data.get("contact_email")),
         "phone_number": _clean_optional_string(data.get("phone_number")),
+        "country": _clean_optional_string(data.get("country")),
+        "jurisdiction": _clean_optional_string(data.get("jurisdiction")),
         "incorporation_date": _clean_optional_date(data.get("incorporation_date")),
         "last_updated": datetime.now(UTC),
     }
@@ -180,6 +182,8 @@ async def get_company_by_number(company_number: str) -> Optional[Dict[str, Any]]
                     "website_domain": company.website_domain,
                     "contact_email": company.contact_email,
                     "phone_number": company.phone_number,
+                    "country": company.country,
+                    "jurisdiction": company.jurisdiction,
                     "incorporation_date": company.incorporation_date,
                     "last_updated": company.last_updated, 
                     "created_at": company.created_at
